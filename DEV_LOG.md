@@ -37,6 +37,13 @@
 - Add `results/evaluation_summary.csv`
 - Connect real camera inputs after the mock pipeline is stable
 
+### Safety Note
+
+- The decision policy is intentionally conservative
+- `WAIT` remains the highest-priority safety action
+- Low-confidence non-WAIT predictions should be overridden to `ASK`
+- Reducing `wrong_cleanup_rate` is more important than maximizing raw accuracy
+
 ## 2026-05-18 - v0.2 Preparation
 
 ### Done
@@ -70,6 +77,11 @@
 - Collect 100 images each for green, red, and blue cups
 - Use captured images to tune HSV thresholds in `perception/detect_cups.py`
 - Record representative screenshots in `docs/demo_screenshots/` if useful for the portfolio
+
+### Safety Note
+
+- The project continues to prefer conservative actions over aggressive cleanup
+- The final cleanup decision should still wait for local liquid verification even after a global `CLEANUP_CANDIDATE` prediction
 
 ## Template
 

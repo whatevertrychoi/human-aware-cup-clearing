@@ -20,6 +20,50 @@ Final robot skills:
 
 The current implementation first validates the full behavior with a mock robot pipeline and then expands toward real perception and Doosan motion integration.
 
+## Conservative Safety-First Policy
+
+The policy is intentionally conservative: uncertain cases are routed to ASK rather than directly to cleanup, because wrong cleanup is more harmful than asking the user for confirmation.
+
+본 시스템은 컵을 빠르게 많이 치우는 것보다, 사용자가 아직 사용하는 컵을 잘못 치우지 않는 것을 우선한다. 따라서 불확실한 상황에서는 로봇이 사용자에게 먼저 확인하도록 보수적으로 설계했다.
+
+Decision philosophy:
+
+1. If the situation is clearly risky, choose `WAIT`
+2. If the situation is ambiguous, choose `ASK`
+3. Only choose `CLEANUP_CANDIDATE` when cleanup is sufficiently safe
+4. Always run local liquid verification before final pickup behavior
+
+Safety-first priority:
+
+1. `WAIT` is the highest-priority safety action
+   - Use `WAIT` when the hand is too close to the cup
+   - Use `WAIT` when the hand occludes the cup or tracking is unstable
+   - Use `WAIT` when cup detection confidence is too low for safe action
+2. `ASK` is the ambiguity-handling action
+   - Use `ASK` when the user is present and the cup was touched recently
+   - Use `ASK` when user presence is uncertain
+   - Use `ASK` when the model confidence is below the confidence threshold
+   - Use `ASK` instead of aggressive cleanup in uncertain cases
+3. `CLEANUP_CANDIDATE` should be assigned strictly
+   - The hand should be far enough away
+   - Recent usage should be sufficiently old
+   - The user should be absent or the cup should be clearly abandoned
+   - Detection and tracking should be stable
+   - Model confidence should be high enough
+
+Current uncertainty-aware policy logic:
+
+```python
+if raw_action == "WAIT":
+    action = "WAIT"
+elif confidence < confidence_threshold:
+    action = "ASK"
+else:
+    action = raw_action
+```
+
+This means the system is allowed to ask more often than strictly necessary, but it should avoid wrong cleanup whenever possible.
+
 ## Two-Stage Perception
 
 This project uses a two-stage perception design.
@@ -51,6 +95,8 @@ This separation is important because a global camera may not reliably see cup co
 8. Verify cup interior with the local camera.
 9. If `EMPTY`, execute `CLEAR`.
 10. If `NON_EMPTY`, execute `SPILL_SAFE_CLEAR`.
+
+The system does not directly jump from uncertain global perception to cleanup. Even after `CLEANUP_CANDIDATE` or `ASK -> yes`, the final action is delayed until local liquid verification confirms how to move the cup safely.
 
 ## Repository Scope
 
@@ -215,6 +261,16 @@ Current tracked evaluation artifacts:
 - `results/confusion_matrix.png`
 - `results/evaluation_summary.csv`
 - `data/processed/dataset_decision.csv`
+
+Future evaluation should emphasize safety-oriented metrics in addition to plain accuracy:
+
+- `wrong_cleanup_rate`
+- `unnecessary_ask_rate`
+- `wait_safety_success`
+- `ask_override_count`
+- `cleanup_candidate_precision`
+
+The main evaluation principle is that a slightly higher ASK rate is acceptable, while wrong cleanup of a cup still in use should be treated as a major failure.
 
 ## Git Version Plan
 
