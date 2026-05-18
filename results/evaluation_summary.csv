@@ -1,0 +1,2 @@
+date,stage,dataset,model,metric,value,notes
+2026-05-18,v0.1-mock-pipeline,dataset_decision.csv,RandomForest,accuracy,1.0000,"Synthetic expert-labeled validation split"

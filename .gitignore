@@ -5,6 +5,7 @@ venv/
 .env
 .pytest_cache/
 
+# Raw data and runtime logs should stay local.
 data/raw/*
 !data/raw/**/.gitkeep
 
@@ -14,6 +15,7 @@ data/logs/*
 results/*.joblib
 results/*.pkl
 results/*.pt
+results/*.pth
 results/*.mp4
 
 *.mp4
