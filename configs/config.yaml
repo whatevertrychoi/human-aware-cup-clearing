@@ -1,0 +1,69 @@
+camera:
+  global_index: 0
+  local_index: 1
+  width: 1280
+  height: 720
+
+cup_detection:
+  min_area: 500
+  colors:
+    green:
+      cup_id: 0
+      lower: [40, 50, 50]
+      upper: [85, 255, 255]
+    red:
+      cup_id: 1
+      lower1: [0, 70, 50]
+      upper1: [10, 255, 255]
+      lower2: [170, 70, 50]
+      upper2: [180, 255, 255]
+    blue:
+      cup_id: 2
+      lower: [90, 50, 50]
+      upper: [130, 255, 255]
+
+tracking:
+  touch_threshold: 0.12
+  default_last_touched_time: 999.0
+  user_absence_threshold: 10.0
+
+policy:
+  confidence_threshold: 0.65
+  model_input_features:
+    - x
+    - y
+    - hand_distance
+    - last_touched_time
+    - touch_count
+    - moved_recently
+    - distance_to_tray
+    - user_present
+    - user_absent_time
+
+local_liquid_detection:
+  roi:
+    x: 0.35
+    y: 0.25
+    w: 0.30
+    h: 0.35
+  min_color_ratio: 0.05
+  min_dark_ratio: 0.08
+  liquid_colors:
+    red:
+      lower1: [0, 70, 50]
+      upper1: [10, 255, 255]
+      lower2: [170, 70, 50]
+      upper2: [180, 255, 255]
+    blue:
+      lower: [90, 50, 50]
+      upper: [130, 255, 255]
+    orange:
+      lower: [10, 70, 50]
+      upper: [30, 255, 255]
+
+robot:
+  tray_position:
+    x: 0.50
+    y: 0.20
+    z: 0.10
+

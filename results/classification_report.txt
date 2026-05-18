@@ -1,0 +1,11 @@
+accuracy: 1.0000
+
+                   precision    recall  f1-score   support
+
+              ASK       1.00      1.00      1.00        67
+CLEANUP_CANDIDATE       1.00      1.00      1.00        66
+             WAIT       1.00      1.00      1.00        67
+
+         accuracy                           1.00       200
+        macro avg       1.00      1.00      1.00       200
+     weighted avg       1.00      1.00      1.00       200
