@@ -127,6 +127,56 @@ python main_demo.py --model results/decision_model.joblib --mock --mock-response
 
 ## Additional Scripts
 
+## Cup Dataset Capture
+
+Connect the external USB webcam and capture cup images for `v0.2-global-cup-detection`.
+
+```bash
+python tools/capture_cup_dataset.py --camera-index 0
+```
+
+If the webcam does not open, try a different camera index.
+
+```bash
+python tools/capture_cup_dataset.py --camera-index 1
+python tools/capture_cup_dataset.py --camera-index 2
+```
+
+Optional camera settings:
+
+```bash
+python tools/capture_cup_dataset.py --camera-index 1 --width 1280 --height 720 --fps 30
+```
+
+Key controls:
+
+- `g`: save a green cup image to `data/raw/green/`
+- `r`: save a red cup image to `data/raw/red/`
+- `b`: save a blue cup image to `data/raw/blue/`
+- `q` or `ESC`: quit
+
+Target collection counts:
+
+- Green: 100 images
+- Red: 100 images
+- Blue: 100 images
+
+Capture guidance:
+
+- Use the same external USB webcam placement planned for the final demo
+- Capture on the real robot work table whenever possible
+- Move cups to different positions instead of keeping them centered
+- Include scenes where cups are close to one another
+- Include lighting and shadow variation
+
+Suggested breakdown per cup:
+
+- 60 images with a single cup at varied positions
+- 25 images near other cups
+- 15 images with lighting or shadow changes
+
+After collection, the next step is `v0.2-global-cup-detection`, where `perception/detect_cups.py` can be tuned with HSV thresholds using the captured images.
+
 Cup detection:
 
 ```bash

@@ -37,6 +37,40 @@
 - Add `results/evaluation_summary.csv`
 - Connect real camera inputs after the mock pipeline is stable
 
+## 2026-05-18 - v0.2 Preparation
+
+### Done
+
+- Added `tools/capture_cup_dataset.py` for USB webcam-based cup image collection
+- Added keyboard-driven capture flow for green, red, and blue cup datasets
+- Added automatic sequential naming and live count overlay
+- Added camera index guidance for external USB webcams on Windows
+- Updated README with cup dataset capture instructions and collection targets
+
+### Test
+
+- `python -m py_compile tools/capture_cup_dataset.py`
+- Hardware validation with a real USB webcam should be done locally:
+- `python tools/capture_cup_dataset.py --camera-index 0`
+- `python tools/capture_cup_dataset.py --camera-index 1`
+- `python tools/capture_cup_dataset.py --camera-index 2`
+
+### Result
+
+- Capture tool implemented for `data/raw/green`, `data/raw/red`, and `data/raw/blue`
+- The script is ready for local webcam-based dataset collection
+
+### Issue
+
+- Real webcam access cannot be verified inside this environment
+- Camera index may differ depending on whether the built-in laptop camera is also active
+
+### Next
+
+- Collect 100 images each for green, red, and blue cups
+- Use captured images to tune HSV thresholds in `perception/detect_cups.py`
+- Record representative screenshots in `docs/demo_screenshots/` if useful for the portfolio
+
 ## Template
 
 Copy this section for future work days.
