@@ -323,6 +323,30 @@
 - Planned merged output:
 - `data/processed/interaction_dataset_trajectory_all.csv`
 
+### Trajectory Retraining Update
+
+- Merged trajectory-aware supplemental datasets into `data/processed/interaction_dataset_trajectory_all.csv`
+- Total rows: `2346`
+- Label distribution:
+- `IDLE=1336`
+- `ASK=527`
+- `WAIT=360`
+- `CLEANUP_CANDIDATE=123`
+- Trained trajectory-aware policy with:
+- `python policy/train_policy.py --data data/processed/interaction_dataset_trajectory_all.csv --model results/decision_model_trajectory.joblib --algo rf`
+- Saved outputs:
+- `results/decision_model_trajectory.joblib`
+- `results/classification_report_trajectory.txt`
+- `results/confusion_matrix_trajectory.png`
+- `results/evaluation_summary_trajectory.csv`
+- Validation metrics:
+- `accuracy=1.0000`
+- `wrong_cleanup_rate=0.0000`
+- `unnecessary_ask_rate=0.0000`
+- `idle_precision=1.0000`
+- `cleanup_candidate_precision=1.0000`
+- `WAIT recall=1.0000`
+
 ## Template
 
 Copy this section for future work days.

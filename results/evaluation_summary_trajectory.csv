@@ -1,0 +1,8 @@
+dataset,algo,metric,value
+data\processed\interaction_dataset_trajectory_all.csv,rf,accuracy,1.0000
+data\processed\interaction_dataset_trajectory_all.csv,rf,wrong_cleanup_rate,0.0000
+data\processed\interaction_dataset_trajectory_all.csv,rf,ask_override_count,0
+data\processed\interaction_dataset_trajectory_all.csv,rf,unnecessary_ask_rate,0.0000
+data\processed\interaction_dataset_trajectory_all.csv,rf,idle_precision,1.0000
+data\processed\interaction_dataset_trajectory_all.csv,rf,cleanup_candidate_precision,1.0000
+data\processed\interaction_dataset_trajectory_all.csv,rf,wait_recall,1.0000

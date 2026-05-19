@@ -97,12 +97,23 @@ def compute_safety_metrics(y_true: pd.Series, y_pred: list[str], ask_override_co
     predicted_cleanup_mask = y_pred_series == "CLEANUP_CANDIDATE"
     true_cleanup_mask = y_true_series == "CLEANUP_CANDIDATE"
     true_wait_mask = y_true_series == "WAIT"
+    predicted_ask_mask = y_pred_series == "ASK"
+    true_ask_mask = y_true_series == "ASK"
+    true_idle_mask = y_true_series == "IDLE"
+    predicted_idle_mask = y_pred_series == "IDLE"
 
     wrong_cleanup_rate = float(((risky_mask) & predicted_cleanup_mask).sum()) / float(max(len(y_true_series), 1))
     cleanup_precision_den = int(predicted_cleanup_mask.sum())
     cleanup_candidate_precision = (
         float((predicted_cleanup_mask & true_cleanup_mask).sum()) / float(cleanup_precision_den)
         if cleanup_precision_den > 0
+        else 0.0
+    )
+    unnecessary_ask_rate = float(((~true_ask_mask) & predicted_ask_mask).sum()) / float(max(len(y_true_series), 1))
+    idle_precision_den = int(predicted_idle_mask.sum())
+    idle_precision = (
+        float((predicted_idle_mask & true_idle_mask).sum()) / float(idle_precision_den)
+        if idle_precision_den > 0
         else 0.0
     )
     wait_recall_den = int(true_wait_mask.sum())
@@ -114,6 +125,8 @@ def compute_safety_metrics(y_true: pd.Series, y_pred: list[str], ask_override_co
     return {
         "wrong_cleanup_rate": wrong_cleanup_rate,
         "ask_override_count": float(ask_override_count),
+        "unnecessary_ask_rate": unnecessary_ask_rate,
+        "idle_precision": idle_precision,
         "cleanup_candidate_precision": cleanup_candidate_precision,
         "wait_recall": wait_recall,
     }

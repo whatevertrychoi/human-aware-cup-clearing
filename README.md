@@ -306,12 +306,23 @@ Recommended real interaction files:
 
 Trajectory-aware supplemental files:
 
-- `data/processed/interaction_idle.csv`
+- `data/processed/interaction_idle_v2.csv`
 - `data/processed/interaction_red_active.csv`
-- `data/processed/interaction_blue_active.csv`
-- `data/processed/interaction_green_active.csv`
-- `data/processed/interaction_abandoned.csv`
+- `data/processed/interaction_blue_active_v2.csv`
+- `data/processed/interaction_green_active_v2.csv`
+- `data/processed/interaction_abandoned_v2.csv`
 - merged trajectory dataset: `data/processed/interaction_dataset_trajectory_all.csv`
+
+Current merged trajectory dataset summary:
+
+- Total rows: `2346`
+- Label distribution: `IDLE=1336`, `ASK=527`, `WAIT=360`, `CLEANUP_CANDIDATE=123`
+- Source file row counts:
+  - `interaction_idle_v2.csv=501`
+  - `interaction_red_active.csv=438`
+  - `interaction_blue_active_v2.csv=639`
+  - `interaction_green_active_v2.csv=327`
+  - `interaction_abandoned_v2.csv=441`
 
 Current merged real interaction dataset summary:
 
@@ -345,6 +356,12 @@ Real dataset policy training:
 
 ```bash
 python policy/train_policy.py --data data/processed/interaction_dataset_all.csv --model results/decision_model_real.joblib --algo rf
+```
+
+Trajectory-aware policy training:
+
+```bash
+python policy/train_policy.py --data data/processed/interaction_dataset_trajectory_all.csv --model results/decision_model_trajectory.joblib --algo rf
 ```
 
 Mock vs real dataset split:
@@ -417,6 +434,16 @@ Current real-data validation metrics:
 - `accuracy=1.0000`
 - `wrong_cleanup_rate=0.0000`
 - `ask_override_count=0`
+- `cleanup_candidate_precision=1.0000`
+- `WAIT recall=1.0000`
+
+Current trajectory-aware validation metrics:
+
+- `accuracy=1.0000`
+- `wrong_cleanup_rate=0.0000`
+- `ask_override_count=0`
+- `unnecessary_ask_rate=0.0000`
+- `idle_precision=1.0000`
 - `cleanup_candidate_precision=1.0000`
 - `WAIT recall=1.0000`
 
