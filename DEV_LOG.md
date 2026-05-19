@@ -83,6 +83,42 @@
 - The project continues to prefer conservative actions over aggressive cleanup
 - The final cleanup decision should still wait for local liquid verification even after a global `CLEANUP_CANDIDATE` prediction
 
+## 2026-05-19 - v0.2 Global Cup Detection
+
+### Done
+
+- Updated `perception/detect_cups.py` for real USB webcam execution
+- Added `--camera-index`, `--backend`, `--width`, `--height`, and `--show-mask-debug` options
+- Added HSV mask cleanup with blur plus morphological open/close
+- Added contour scoring to reject small or tape-like regions more aggressively
+- Added bbox, center point, cup ID, color, and area visualization
+- Added Windows-friendly webcam opening flow for `camera-index 1 + backend dshow`
+
+### Test
+
+- `python -m py_compile perception/detect_cups.py`
+- `python perception/detect_cups.py --help`
+- Runtime target:
+- `python perception/detect_cups.py --config configs/config.yaml --camera-index 1 --backend dshow`
+- Runtime debug target:
+- `python perception/detect_cups.py --config configs/config.yaml --camera-index 1 --backend dshow --show-mask-debug`
+
+### Result
+
+- Cup detection module is ready for live USB webcam validation
+- Real HSV threshold tuning still needs to be done on the actual camera feed
+
+### Issue
+
+- Final green/red/blue HSV thresholds have not been validated in this environment
+- Blue tape on the table may still require threshold or area-filter refinement during live testing
+
+### Next
+
+- Run live webcam detection on the collected cup scenes
+- Tune `configs/config.yaml` HSV ranges against real frames
+- Validate stable `cup_id`, `bbox`, and `center_pixel` output under clutter and partial occlusion
+
 ## Template
 
 Copy this section for future work days.

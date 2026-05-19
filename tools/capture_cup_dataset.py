@@ -86,7 +86,13 @@ def build_output_dirs(base_dir: str) -> dict[str, Path]:
     }
 
 
-def open_camera_with_backend(camera_index: int, width: int, height: int, fps: int, backend_id: int | None) -> cv2.VideoCapture:
+def open_camera_with_backend(
+    camera_index: int,
+    width: int,
+    height: int,
+    fps: int,
+    backend_id: int | None,
+) -> cv2.VideoCapture:
     capture = cv2.VideoCapture(camera_index) if backend_id is None else cv2.VideoCapture(camera_index, backend_id)
     capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
@@ -110,14 +116,26 @@ def choose_backend_order(preferred_backend: str) -> list[tuple[str, int | None]]
     return BACKEND_CANDIDATES
 
 
-def try_open_camera(camera_index: int, width: int, height: int, fps: int, preferred_backend: str):
+def try_open_camera(
+    camera_index: int,
+    width: int,
+    height: int,
+    fps: int,
+    preferred_backend: str,
+):
     attempts: list[tuple[str, str]] = []
     for backend_name, backend_id in choose_backend_order(preferred_backend):
         if backend_name != "AUTO" and backend_id is None:
             attempts.append((backend_name, "backend not available in this OpenCV build"))
             continue
 
-        capture = open_camera_with_backend(camera_index, width, height, fps, backend_id)
+        capture = open_camera_with_backend(
+            camera_index,
+            width,
+            height,
+            fps,
+            backend_id,
+        )
         if not capture.isOpened():
             capture.release()
             attempts.append((backend_name, "open failed"))
@@ -134,10 +152,22 @@ def try_open_camera(camera_index: int, width: int, height: int, fps: int, prefer
     return None, None, attempts
 
 
-def scan_camera_indices(width: int, height: int, fps: int, preferred_backend: str, scan_max_index: int) -> list[str]:
+def scan_camera_indices(
+    width: int,
+    height: int,
+    fps: int,
+    preferred_backend: str,
+    scan_max_index: int,
+) -> list[str]:
     found: list[str] = []
     for index in range(scan_max_index + 1):
-        capture, backend_name, _ = try_open_camera(index, width, height, fps, preferred_backend)
+        capture, backend_name, _ = try_open_camera(
+            index,
+            width,
+            height,
+            fps,
+            preferred_backend,
+        )
         if capture is not None:
             found.append(f"index {index} via {backend_name}")
             capture.release()
@@ -171,7 +201,13 @@ def main() -> int:
         for color, directory in output_dirs.items()
     }
 
-    capture, backend_name, attempts = try_open_camera(args.camera_index, width, height, fps, args.backend)
+    capture, backend_name, attempts = try_open_camera(
+        args.camera_index,
+        width,
+        height,
+        fps,
+        args.backend,
+    )
     if capture is None:
         print(f"[ERROR] Could not open camera index {args.camera_index}.")
         print("Tried backends:")
@@ -183,7 +219,13 @@ def main() -> int:
         print("Try an explicit backend:")
         print(f"python tools/capture_cup_dataset.py --camera-index {args.camera_index} --backend dshow")
         print(f"python tools/capture_cup_dataset.py --camera-index {args.camera_index} --backend msmf")
-        available_cameras = scan_camera_indices(width, height, fps, args.backend, args.scan_max_index)
+        available_cameras = scan_camera_indices(
+            width,
+            height,
+            fps,
+            args.backend,
+            args.scan_max_index,
+        )
         if available_cameras:
             print("Detected working camera candidates:")
             for item in available_cameras:

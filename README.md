@@ -229,6 +229,18 @@ Cup detection:
 python perception/detect_cups.py --config configs/config.yaml
 ```
 
+USB webcam runtime example:
+
+```bash
+python perception/detect_cups.py --config configs/config.yaml --camera-index 1 --backend dshow
+```
+
+Optional mask debug view:
+
+```bash
+python perception/detect_cups.py --config configs/config.yaml --camera-index 1 --backend dshow --show-mask-debug
+```
+
 Hand detection:
 
 ```bash
