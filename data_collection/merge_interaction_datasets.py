@@ -23,12 +23,17 @@ def parse_args() -> argparse.Namespace:
             "data/processed/interaction_red.csv",
             "data/processed/interaction_blue.csv",
             "data/processed/interaction_clutter.csv",
+            "data/processed/interaction_idle.csv",
+            "data/processed/interaction_red_active.csv",
+            "data/processed/interaction_blue_active.csv",
+            "data/processed/interaction_green_active.csv",
+            "data/processed/interaction_abandoned.csv",
         ],
         help="Input CSV paths to merge",
     )
     parser.add_argument(
         "--out",
-        default="data/processed/interaction_dataset_all.csv",
+        default="data/processed/interaction_dataset_trajectory_all.csv",
         help="Merged output CSV path",
     )
     return parser.parse_args()

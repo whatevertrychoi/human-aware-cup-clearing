@@ -38,6 +38,22 @@ def preprocess_inference_frame(frame: pd.DataFrame, model_bundle: dict) -> pd.Da
         processed["last_touched_time"] = processed["last_touched_time"].clip(upper=last_touched_time_clip_upper)
     if "user_absent_time" in processed.columns:
         processed["user_absent_time"] = processed["user_absent_time"].clip(upper=user_absent_time_clip_upper)
+    if "time_near_cup" in processed.columns:
+        processed["time_near_cup"] = processed["time_near_cup"].clip(
+            upper=float(preprocessing.get("time_near_cup_clip_upper", 30.0))
+        )
+    if "time_since_release" in processed.columns:
+        processed["time_since_release"] = processed["time_since_release"].clip(
+            upper=float(preprocessing.get("time_since_release_clip_upper", 60.0))
+        )
+    if "cup_motion_distance" in processed.columns:
+        processed["cup_motion_distance"] = processed["cup_motion_distance"].clip(
+            upper=float(preprocessing.get("cup_motion_distance_clip_upper", 2.0))
+        )
+    if "stationary_time" in processed.columns:
+        processed["stationary_time"] = processed["stationary_time"].clip(
+            upper=float(preprocessing.get("stationary_time_clip_upper", 60.0))
+        )
     return processed
 
 
@@ -62,9 +78,11 @@ def predict_actions(cup_features: dict | list[dict], model_bundle: dict, config:
         confidence = float(max(probability_vector))
         action = str(raw_action)
         uncertainty_override = False
-        if raw_action != "WAIT" and confidence < threshold:
-            action = "ASK"
+        if raw_action == "CLEANUP_CANDIDATE" and confidence < threshold:
+            action = "ASK" if int(item.get("used_cup_candidate", 0)) else "IDLE"
             uncertainty_override = True
+        elif raw_action == "ASK" and int(item.get("user_present", 0)) == 1 and int(item.get("used_cup_candidate", 1)) == 0:
+            action = "IDLE"
 
         output = {
             "cup_id": int(item.get("cup_id", -1)),

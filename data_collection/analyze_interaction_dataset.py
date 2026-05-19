@@ -21,6 +21,18 @@ def print_describe(df: pd.DataFrame, column: str) -> None:
     print(df[column].describe().to_string())
 
 
+FEATURE_COLUMNS = [
+    "hand_distance",
+    "last_touched_time",
+    "user_absent_time",
+    "time_near_cup",
+    "time_since_release",
+    "release_count",
+    "cup_motion_distance",
+    "stationary_time",
+]
+
+
 def main() -> int:
     args = parse_args()
     data_path = Path(args.data)
@@ -48,15 +60,14 @@ def main() -> int:
         print(df["source_file"].value_counts().to_string())
 
     if "label" in df.columns:
-        for feature in ["hand_distance", "last_touched_time", "user_absent_time"]:
-            if feature in df.columns:
-                print(f"\nLabel-wise {feature} mean/std:")
-                stats = df.groupby("label")[feature].agg(["mean", "std", "min", "max"])
-                print(stats.to_string())
+        available = [feature for feature in FEATURE_COLUMNS if feature in df.columns]
+        if available:
+            print("\nLabel-wise feature mean/std/min/max:")
+            stats = df.groupby("label")[available].agg(["mean", "std", "min", "max"])
+            print(stats.to_string())
 
-    print_describe(df, "hand_distance")
-    print_describe(df, "last_touched_time")
-    print_describe(df, "user_absent_time")
+    for feature in FEATURE_COLUMNS:
+        print_describe(df, feature)
     return 0
 
 

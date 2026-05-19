@@ -46,6 +46,23 @@ policy:
     - distance_to_tray
     - user_present
     - user_absent_time
+    - is_active_cup
+    - time_near_cup
+    - time_since_release
+    - release_count
+    - cup_motion_distance
+    - stationary_time
+    - was_moved
+    - used_cup_candidate
+    - idle_candidate
+  preprocessing:
+    hand_distance_clip_upper: 2.0
+    last_touched_time_clip_upper: 60.0
+    user_absent_time_clip_upper: 60.0
+    time_near_cup_clip_upper: 30.0
+    time_since_release_clip_upper: 60.0
+    cup_motion_distance_clip_upper: 2.0
+    stationary_time_clip_upper: 60.0
 
 local_liquid_detection:
   roi:

@@ -21,6 +21,7 @@
 
 ### Notes
 - The main fix in this version is reducing unnecessary cup-wise `ASK` prompts by requiring trajectory evidence before a cup can become an `ASK` target
+- The longer-term refactor goal is model-first trajectory-aware behavior cloning with only a lightweight safety guard
 
 ## v0.4-real-interaction-dataset
 

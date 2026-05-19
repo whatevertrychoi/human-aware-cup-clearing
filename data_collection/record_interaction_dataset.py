@@ -49,6 +49,7 @@ FIELDNAMES = [
     "stationary_time",
     "was_moved",
     "used_cup_candidate",
+    "idle_candidate",
     "label",
 ]
 MOCK_DATASET_NAME = "dataset_decision.csv"
@@ -155,6 +156,7 @@ def make_dataset_rows(
             "stationary_time": round(float(cup.get("stationary_time", 0.0)), 3),
             "was_moved": int(cup.get("was_moved", 0)),
             "used_cup_candidate": int(cup.get("used_cup_candidate", 0)),
+            "idle_candidate": int(cup.get("idle_candidate", 0)),
         }
         feature_row["label"] = expert_high_level_policy(feature_row, config)
         rows.append(feature_row)

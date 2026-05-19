@@ -55,6 +55,16 @@ This means the system is allowed to ask more often than strictly necessary, but 
 
 The older live-policy path treated cups too independently, so unused cups could still surface as `ASK`. The current live-policy layer adds active-cup arbitration and trajectory-aware suppression on top of the trained model.
 
+Current limitation of the older live-policy path:
+
+- cup-wise independent `ASK` predictions could appear even when only one cup was actually used
+- the live behavior was too strongly shaped by hand-written arbitration
+
+Current improvement direction:
+
+- trajectory-aware Behavior Cloning predicts `WAIT`, `ASK`, `IDLE`, and `CLEANUP_CANDIDATE`
+- a lightweight safety guard only prevents unsafe or unnecessary actions
+
 Core arbitration rules:
 
 1. `WAIT`
@@ -294,6 +304,15 @@ Recommended real interaction files:
 - `data/processed/interaction_clutter.csv`
 - merged dataset: `data/processed/interaction_dataset_all.csv`
 
+Trajectory-aware supplemental files:
+
+- `data/processed/interaction_idle.csv`
+- `data/processed/interaction_red_active.csv`
+- `data/processed/interaction_blue_active.csv`
+- `data/processed/interaction_green_active.csv`
+- `data/processed/interaction_abandoned.csv`
+- merged trajectory dataset: `data/processed/interaction_dataset_trajectory_all.csv`
+
 Current merged real interaction dataset summary:
 
 - Total rows: `1547`
@@ -316,6 +335,12 @@ Dataset merge:
 python data_collection/merge_interaction_datasets.py --out data/processed/interaction_dataset_all.csv
 ```
 
+Trajectory-aware merge:
+
+```bash
+python data_collection/merge_interaction_datasets.py --out data/processed/interaction_dataset_trajectory_all.csv
+```
+
 Real dataset policy training:
 
 ```bash
@@ -334,6 +359,13 @@ Placeholder clipping for real-data training:
 - `last_touched_time` is clipped to `60.0`
 - `user_absent_time` is clipped to `60.0`
 
+Additional trajectory-aware clipping is also applied for:
+
+- `time_near_cup`
+- `time_since_release`
+- `cup_motion_distance`
+- `stationary_time`
+
 This prevents the model from overfitting to sentinel values such as `999` or `1000+` that represent hand-not-visible or never-touched states.
 
 Trajectory-aware dataset note:
@@ -345,6 +377,10 @@ Trajectory-aware dataset note:
   - one active cup while the other cups stay idle
   - cup moved and released
   - user absent with long stationary cups
+
+The intended final description is:
+
+“Trajectory-aware Behavior Cloning model predicts `WAIT` / `ASK` / `IDLE` / `CLEANUP_CANDIDATE` from hand-cup interaction history. A lightweight safety guard only prevents unsafe or unnecessary actions.”
 
 ## Data and Results
 

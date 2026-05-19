@@ -37,6 +37,10 @@ def get_preprocessing_config(config: dict) -> dict:
         "hand_distance_clip_upper": 2.0,
         "last_touched_time_clip_upper": 60.0,
         "user_absent_time_clip_upper": 60.0,
+        "time_near_cup_clip_upper": 30.0,
+        "time_since_release_clip_upper": 60.0,
+        "cup_motion_distance_clip_upper": 2.0,
+        "stationary_time_clip_upper": 60.0,
     }
     policy_cfg = config.get("policy", {}) if isinstance(config, dict) else {}
     preprocess_cfg = policy_cfg.get("preprocessing", {}) if isinstance(policy_cfg, dict) else {}
@@ -55,19 +59,32 @@ def preprocess_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         processed["last_touched_time"] = processed["last_touched_time"].clip(upper=clip_cfg["last_touched_time_clip_upper"])
     if "user_absent_time" in processed.columns:
         processed["user_absent_time"] = processed["user_absent_time"].clip(upper=clip_cfg["user_absent_time_clip_upper"])
+    if "time_near_cup" in processed.columns:
+        processed["time_near_cup"] = processed["time_near_cup"].clip(upper=clip_cfg["time_near_cup_clip_upper"])
+    if "time_since_release" in processed.columns:
+        processed["time_since_release"] = processed["time_since_release"].clip(upper=clip_cfg["time_since_release_clip_upper"])
+    if "cup_motion_distance" in processed.columns:
+        processed["cup_motion_distance"] = processed["cup_motion_distance"].clip(upper=clip_cfg["cup_motion_distance_clip_upper"])
+    if "stationary_time" in processed.columns:
+        processed["stationary_time"] = processed["stationary_time"].clip(upper=clip_cfg["stationary_time_clip_upper"])
     return processed
 
 
-def apply_conservative_override(raw_predictions, probabilities, threshold: float) -> tuple[list[str], int]:
+def apply_conservative_override(
+    raw_predictions, probabilities, threshold: float, features: pd.DataFrame
+) -> tuple[list[str], int]:
     adjusted: list[str] = []
     override_count = 0
-    for raw_action, probability_vector in zip(raw_predictions, probabilities):
+    for row_index, (raw_action, probability_vector) in enumerate(zip(raw_predictions, probabilities)):
         confidence = float(max(probability_vector))
         if raw_action == "WAIT":
             adjusted.append("WAIT")
-        elif confidence < threshold:
-            adjusted.append("ASK")
+        elif raw_action == "CLEANUP_CANDIDATE" and confidence < threshold:
+            used_cup_candidate = int(features.iloc[row_index].get("used_cup_candidate", 1))
+            adjusted.append("ASK" if used_cup_candidate else "IDLE")
             override_count += 1
+        elif raw_action == "ASK" and int(features.iloc[row_index].get("user_present", 0)) == 1 and int(features.iloc[row_index].get("used_cup_candidate", 1)) == 0:
+            adjusted.append("IDLE")
         else:
             adjusted.append(str(raw_action))
     return adjusted, override_count
@@ -76,7 +93,7 @@ def apply_conservative_override(raw_predictions, probabilities, threshold: float
 def compute_safety_metrics(y_true: pd.Series, y_pred: list[str], ask_override_count: int) -> dict[str, float]:
     y_true_series = pd.Series(y_true).reset_index(drop=True)
     y_pred_series = pd.Series(y_pred)
-    risky_mask = y_true_series.isin(["WAIT", "ASK"])
+    risky_mask = y_true_series.isin(["WAIT", "ASK", "IDLE"])
     predicted_cleanup_mask = y_pred_series == "CLEANUP_CANDIDATE"
     true_cleanup_mask = y_true_series == "CLEANUP_CANDIDATE"
     true_wait_mask = y_true_series == "WAIT"
@@ -107,7 +124,7 @@ def validate_feature_names(feature_names: list[str], df: pd.DataFrame) -> list[s
     if missing_columns:
         return missing_columns
 
-    forbidden = {"cup_id", "color"}
+    forbidden = {"cup_id", "color", "active_cup_id"}
     present_forbidden = [feature for feature in feature_names if feature in forbidden]
     if present_forbidden:
         raise ValueError(
@@ -184,7 +201,7 @@ def main() -> int:
     probabilities = model.predict_proba(x_val)
     labels = sorted(y_data.unique())
     confidence_threshold = float(get_required(config, ["policy", "confidence_threshold"]))
-    predictions, ask_override_count = apply_conservative_override(raw_predictions, probabilities, confidence_threshold)
+    predictions, ask_override_count = apply_conservative_override(raw_predictions, probabilities, confidence_threshold, x_val)
     accuracy = accuracy_score(y_val, predictions)
     report = classification_report(y_val, predictions, labels=labels)
     matrix = confusion_matrix(y_val, predictions, labels=labels)

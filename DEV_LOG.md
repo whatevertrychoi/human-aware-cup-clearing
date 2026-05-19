@@ -298,6 +298,7 @@
 - `ASK` is restricted to cups with real trajectory evidence
 - Unused cups can remain `IDLE` even in multi-cup scenes where one other cup is active
 - The overlay now exposes `ACTIVE`, `USED`, `time_near_cup`, `stationary_time`, and release-related state for debugging
+- The current direction is shifting from rule-heavy arbitration toward model-first trajectory-aware behavior cloning with a lightweight safety guard
 
 ### Issue
 
@@ -310,6 +311,17 @@
 - Collect one-active-cup multi-cup scenes so untouched cups remain `IDLE`
 - Collect moved-and-released scenes and long stationary abandonment scenes
 - Merge the supplemental data and retrain the policy with the expanded feature set and `IDLE` label
+
+### Data Augmentation Plan
+
+- Planned supplemental files:
+- `data/processed/interaction_idle.csv`
+- `data/processed/interaction_red_active.csv`
+- `data/processed/interaction_blue_active.csv`
+- `data/processed/interaction_green_active.csv`
+- `data/processed/interaction_abandoned.csv`
+- Planned merged output:
+- `data/processed/interaction_dataset_trajectory_all.csv`
 
 ## Template
 

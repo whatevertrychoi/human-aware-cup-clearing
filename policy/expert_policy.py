@@ -33,10 +33,7 @@ def expert_high_level_policy(cup_feature: dict, config: dict) -> str:
     if is_active_cup and hand_distance < touch_threshold:
         return "WAIT"
 
-    released_recently = (
-        time_since_release <= recent_touch_threshold or last_touched_time <= recent_touch_threshold
-    )
-    if used_cup_candidate and user_present == 1 and hand_distance >= touch_threshold and released_recently:
+    if used_cup_candidate and user_present == 1 and time_since_release < recent_touch_threshold:
         return "ASK"
 
     if user_present == 1 and not used_cup_candidate:
@@ -45,10 +42,10 @@ def expert_high_level_policy(cup_feature: dict, config: dict) -> str:
     if user_present == 0 and user_absent_time > user_absence_threshold and stationary_time > stationary_threshold:
         return "CLEANUP_CANDIDATE"
 
-    if last_touched_time > cleanup_time_threshold and stationary_time > stationary_threshold:
+    if user_present == 0 and last_touched_time > cleanup_time_threshold and stationary_time > stationary_threshold:
         return "CLEANUP_CANDIDATE"
 
-    return "ASK" if used_cup_candidate else "IDLE"
+    return "IDLE"
 
 
 def parse_args() -> argparse.Namespace:

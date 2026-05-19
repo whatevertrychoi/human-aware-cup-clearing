@@ -222,7 +222,7 @@ def draw_perception_debug(frame, cups: list[dict], hand: dict, user_state: dict)
     return output
 
 
-def arbitrate_live_actions(cups: list[dict], predictions: list[dict], user_state: dict, hand: dict, config: dict) -> list[dict]:
+def apply_live_safety_guard(cups: list[dict], predictions: list[dict], user_state: dict, hand: dict, config: dict) -> list[dict]:
     thresholds = get_live_policy_thresholds(config)
     prediction_map = {int(item["cup_id"]): item for item in predictions}
     results: list[dict] = []
@@ -237,50 +237,38 @@ def arbitrate_live_actions(cups: list[dict], predictions: list[dict], user_state
         confidence = float(prediction.get("confidence", 0.0))
         hand_distance = float(cup.get("hand_distance", 999.0))
         used_cup_candidate = bool(cup.get("used_cup_candidate", 0))
-        released_recently = (
-            float(cup.get("time_since_release", 999.0)) <= thresholds["recent_touch_threshold"]
-            or float(cup.get("last_touched_time", 999.0)) <= thresholds["recent_touch_threshold"]
-        )
+        user_present = int(user_state.get("user_present", 0))
         active_and_near = bool(hand.get("hand_visible")) and bool(cup.get("is_active_cup", 0)) and hand_distance < thresholds["touch_threshold"]
         cleanup_ready = (
-            float(user_state.get("user_absent_time", 0.0)) > thresholds["user_absence_threshold"]
+            user_present == 0
+            and float(user_state.get("user_absent_time", 0.0)) > thresholds["user_absence_threshold"]
             and float(cup.get("stationary_time", 0.0)) > thresholds["stationary_threshold"]
         ) or (
-            float(cup.get("last_touched_time", 999.0)) > thresholds["cleanup_time_threshold"]
+            user_present == 0
+            and float(cup.get("last_touched_time", 999.0)) > thresholds["cleanup_time_threshold"]
             and float(cup.get("stationary_time", 0.0)) > thresholds["stationary_threshold"]
         )
 
-        action = "IDLE"
-        reason = "idle_default"
+        action = str(prediction.get("action", raw_action))
+        reason = "model_first"
         uncertainty_override = False
+
         if active_and_near:
             action = "WAIT"
-            reason = "active_cup_hand_near"
-        elif used_cup_candidate and int(user_state.get("user_present", 0)) == 1 and hand_distance >= thresholds["touch_threshold"] and released_recently:
-            action = "ASK"
-            reason = "used_cup_recent_release"
-        elif int(user_state.get("user_present", 0)) == 1 and not used_cup_candidate:
+            reason = "safety_wait_override"
+        elif user_present == 1 and not used_cup_candidate:
             action = "IDLE"
-            reason = "present_but_unused"
-        elif cleanup_ready:
-            action = "CLEANUP_CANDIDATE"
-            reason = "absent_or_abandoned"
-        elif raw_action == "WAIT":
-            action = "WAIT"
-            reason = "model_wait_fallback"
-        elif confidence < thresholds["confidence_threshold"]:
+            reason = "present_unused_idle_suppression"
+        elif action == "CLEANUP_CANDIDATE" and confidence < thresholds["confidence_threshold"]:
             action = "ASK" if used_cup_candidate else "IDLE"
-            reason = "low_confidence_override"
+            reason = "low_confidence_cleanup_guard"
             uncertainty_override = True
-        elif raw_action == "ASK":
+        elif action == "ASK" and user_present == 1 and not used_cup_candidate:
+            action = "IDLE"
+            reason = "unused_cup_ask_suppressed"
+        elif action == "CLEANUP_CANDIDATE" and not cleanup_ready:
             action = "ASK" if used_cup_candidate else "IDLE"
-            reason = "ask_requires_used_cup"
-        elif raw_action == "CLEANUP_CANDIDATE":
-            action = "CLEANUP_CANDIDATE" if cleanup_ready else ("ASK" if used_cup_candidate else "IDLE")
-            reason = "cleanup_arbitrated"
-        else:
-            action = raw_action
-            reason = "model_action"
+            reason = "cleanup_requires_abandonment"
 
         merged = dict(prediction)
         merged["action"] = action
@@ -500,12 +488,21 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
                     "distance_to_tray": float(cup.get("distance_to_tray", 0.0)),
                     "user_present": int(user_state.get("user_present", 0)),
                     "user_absent_time": float(user_state.get("user_absent_time", 0.0)),
+                    "is_active_cup": int(cup.get("is_active_cup", 0)),
+                    "time_near_cup": float(cup.get("time_near_cup", 0.0)),
+                    "time_since_release": float(cup.get("time_since_release", 999.0)),
+                    "release_count": int(cup.get("release_count", 0)),
+                    "cup_motion_distance": float(cup.get("cup_motion_distance", 0.0)),
+                    "stationary_time": float(cup.get("stationary_time", 0.0)),
+                    "was_moved": int(cup.get("was_moved", 0)),
+                    "used_cup_candidate": int(cup.get("used_cup_candidate", 0)),
+                    "idle_candidate": int(cup.get("idle_candidate", 0)),
                 }
                 for cup in tracked_cups
             ]
 
             raw_predictions = predict_actions(feature_rows, model_bundle, config) if feature_rows else []
-            predictions = arbitrate_live_actions(tracked_cups, raw_predictions, user_state, hand, config) if raw_predictions else []
+            predictions = apply_live_safety_guard(tracked_cups, raw_predictions, user_state, hand, config) if raw_predictions else []
             overlay = draw_live_policy_overlay(frame, tracked_cups, hand, user_state, predictions)
             cv2.imshow("Live Policy Inference", overlay)
             if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
