@@ -15,19 +15,36 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+BACKEND_MAP = {
+    "auto": None,
+    "dshow": getattr(cv2, "CAP_DSHOW", None),
+    "msmf": getattr(cv2, "CAP_MSMF", None),
+}
+
+MEDIAPIPE_SOLUTIONS_ERROR = """[ERROR] This script requires MediaPipe Solutions API.
+Current mediapipe package does not provide mp.solutions.
+Use Python 3.12 environment with mediapipe==0.10.13:
+conda create -n cup_cleanup_mp312 python=3.12 -y
+conda activate cup_cleanup_mp312
+pip install mediapipe==0.10.13"""
+
+
+def has_mediapipe_solutions() -> bool:
+    return mp is not None and hasattr(mp, "solutions")
+
 
 def detect_hand(frame, hands=None) -> dict:
     result = {"hand_visible": False, "hand_center": None, "landmarks": []}
-    if mp is None:
+    if not has_mediapipe_solutions():
         return result
 
     owns_context = hands is None
     if owns_context:
         hands = mp.solutions.hands.Hands(
             static_image_mode=False,
-            max_num_hands=1,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
+            max_num_hands=2,
+            min_detection_confidence=0.35,
+            min_tracking_confidence=0.35,
         )
 
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -52,6 +69,7 @@ def detect_hand(frame, hands=None) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Detect a hand center using MediaPipe Hands.")
     parser.add_argument("--camera-index", type=int, default=0, help="Camera index")
+    parser.add_argument("--backend", default="auto", choices=["auto", "dshow", "msmf"], help="OpenCV backend")
     return parser.parse_args()
 
 
@@ -60,17 +78,21 @@ def main() -> int:
     if mp is None:
         print("[ERROR] mediapipe is not installed. Run `pip install -r requirements.txt` first.")
         return 1
+    if not has_mediapipe_solutions():
+        print(MEDIAPIPE_SOLUTIONS_ERROR)
+        return 1
 
-    cap = cv2.VideoCapture(args.camera_index)
+    backend_id = BACKEND_MAP[args.backend]
+    cap = cv2.VideoCapture(args.camera_index) if backend_id is None else cv2.VideoCapture(args.camera_index, backend_id)
     if not cap.isOpened():
         print("[ERROR] Could not open camera.")
         return 1
 
     hands = mp.solutions.hands.Hands(
         static_image_mode=False,
-        max_num_hands=1,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
+        max_num_hands=2,
+        min_detection_confidence=0.35,
+        min_tracking_confidence=0.35,
     )
     try:
         while True:
@@ -96,4 +118,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

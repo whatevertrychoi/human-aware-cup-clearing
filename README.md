@@ -151,6 +151,28 @@ pip install -r requirements.txt
 
 Note: `mediapipe` support can vary depending on Python version. The mock pipeline does not require a camera and is the recommended first validation step.
 
+## v0.3 Environment
+
+For `v0.3-hand-user-tracking`, use a Python 3.12 environment with the MediaPipe Solutions API.
+
+Recommended setup:
+
+```powershell
+conda create -n cup_cleanup_mp312 python=3.12 -y
+conda activate cup_cleanup_mp312
+cd C:\Users\minseok\Desktop\cup_cleanup
+pip install -r requirements.txt
+pip install mediapipe==0.10.13
+```
+
+Verify the installation:
+
+```powershell
+python -c "import mediapipe as mp; print(mp.__version__); print(hasattr(mp, 'solutions'))"
+```
+
+The second line should print `True` for the existing `MediaPipe Hands` and `Face Detection` code to work correctly.
+
 ## Execution Order
 
 ```bash
@@ -241,6 +263,12 @@ Optional mask debug view:
 python perception/detect_cups.py --config configs/config.yaml --camera-index 1 --backend dshow --show-mask-debug
 ```
 
+Perception debug with cups, hand, and user presence:
+
+```bash
+python main_demo.py --camera-index 1 --backend dshow --debug-perception
+```
+
 Hand detection:
 
 ```bash
@@ -251,6 +279,13 @@ User presence detection:
 
 ```bash
 python perception/detect_user_presence.py --camera-index 0
+```
+
+USB webcam examples:
+
+```bash
+python perception/detect_hand.py --camera-index 1 --backend dshow
+python perception/detect_user_presence.py --camera-index 1 --backend dshow
 ```
 
 Local liquid detection:

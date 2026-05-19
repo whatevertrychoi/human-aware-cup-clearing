@@ -119,6 +119,53 @@
 - Tune `configs/config.yaml` HSV ranges against real frames
 - Validate stable `cup_id`, `bbox`, and `center_pixel` output under clutter and partial occlusion
 
+## 2026-05-19 - v0.3 Hand and User Tracking
+
+### Done
+
+- Added backend-aware webcam opening for `detect_hand.py` and `detect_user_presence.py`
+- Connected cup detection, hand detection, user presence, and trackers inside `main_demo.py`
+- Added `--debug-perception` mode for live visualization
+- Updated `InteractionTracker` to compute hand distance from real pixel-space cup centers
+- Added debug overlay for hand center, user presence, hand-cup distance, touch count, and last touched time
+
+### Test
+
+- `python -m py_compile main_demo.py perception/detect_hand.py perception/detect_user_presence.py tracking/interaction_tracker.py tracking/user_presence_tracker.py`
+- `python main_demo.py --help`
+- `python perception/detect_hand.py --help`
+- `python perception/detect_user_presence.py --help`
+- Runtime target:
+- `python main_demo.py --camera-index 1 --backend dshow --debug-perception`
+
+### Result
+
+- The main entrypoint is now ready for live perception debugging with cups, hand, and user presence
+- Real runtime validation should be performed on the USB webcam feed
+
+### Issue
+
+- MediaPipe runtime behavior still depends on local installation compatibility
+- User presence fallback remains simple when face detection is unavailable
+- Current base environment uses Python 3.13 with mediapipe 0.10.35, which does not provide `mp.solutions`
+- Existing `MediaPipe Hands` and `Face Detection` code therefore cannot run in the current base environment
+
+### Next
+
+- Run the integrated perception debug view on the real table scene
+- Verify stable hand center and user presence under clutter and robot-arm occlusion
+- Refine tracker thresholds if touch timing is too sensitive or too slow
+
+### Environment Fix
+
+- Recommended environment for `v0.3`:
+- `Python 3.12`
+- `mediapipe==0.10.13`
+- Verification command:
+- `python -c "import mediapipe as mp; print(mp.__version__); print(hasattr(mp, 'solutions'))"`
+- Expected result:
+- `True` for `hasattr(mp, 'solutions')`
+
 ## Template
 
 Copy this section for future work days.
