@@ -97,11 +97,13 @@ class InteractionTracker:
             if is_near:
                 state["time_near_cup"] += max(0.0, dt)
                 state["time_since_hand_near"] = 0.0
+                state["stationary_time"] = 0.0
             else:
                 state["time_since_hand_near"] += max(0.0, dt)
             if state["prev_near"] and not is_near:
                 state["release_count"] += 1
                 state["time_since_release"] = 0.0
+                state["stationary_time"] = 0.0
             state["prev_near"] = is_near
 
             if is_near:

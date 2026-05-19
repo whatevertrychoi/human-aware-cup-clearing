@@ -18,6 +18,8 @@
 ### Changed
 - Updated expert-rule labeling to support `IDLE` in trajectory-aware data collection
 - Updated real interaction recorder to save active-cup and trajectory features
+- Added explicit `ASK` delay after release and a longer delay for never-active cups
+- Tightened cleanup promotion so user presence suppresses stationary-only cleanup
 
 ### Notes
 - The main fix in this version is reducing unnecessary cup-wise `ASK` prompts by requiring trajectory evidence before a cup can become an `ASK` target

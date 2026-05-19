@@ -80,8 +80,14 @@ Core arbitration rules:
    - `used_cup_candidate = False`.
    - The hand is not near the cup.
 4. `CLEANUP_CANDIDATE`
-   - The user has been absent long enough and the cup has stayed stationary long enough.
-   - Or the cup has been untouched for a long time and is stationary.
+    - The user has been absent long enough and the cup has stayed stationary long enough.
+    - Or the cup has been untouched for a long time and is stationary.
+
+Current ASK timing policy:
+
+- A used cup is not allowed to trigger `ASK` immediately after release. It must remain idle after release for `ask_delay_after_release` seconds. The default is `20.0s`.
+- A never-active cup stays `IDLE` while the user is present. It is only allowed to surface as `ASK` after `never_active_ask_delay` seconds of long untouched idling. The default is `60.0s`.
+- `CLEANUP_CANDIDATE` is strongly gated by user absence. Stationary time alone is not enough while the user is still present.
 
 Current trajectory-aware tracker fields:
 

@@ -184,6 +184,12 @@
 - `user_present=1`, `hand_visible=1`, `user_absent_time=0.0s` were confirmed.
 - Hand-cup distance, `touch_count`, and `last_touched_time` update correctly in the overlay.
 
+### Timing Update
+
+- Added explicit ASK delay handling so a used cup does not trigger `ASK` immediately after release.
+- Added a longer delay for never-active cups so they remain `IDLE` while the user is still present unless they stay untouched for a long time.
+- Tightened cleanup gating so stationary time alone does not promote a cup to `CLEANUP_CANDIDATE` while the user is still present.
+
 ## 2026-05-19 - v0.4 Real Interaction Dataset
 
 ### Done

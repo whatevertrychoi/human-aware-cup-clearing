@@ -126,12 +126,20 @@ def create_mediapipe_contexts():
 def get_live_policy_thresholds(config: dict) -> dict:
     tracking_cfg = config.get("tracking", {}) if isinstance(config, dict) else {}
     policy_cfg = config.get("policy", {}) if isinstance(config, dict) else {}
+    ask_delay_after_release = float(
+        policy_cfg.get("ask_delay_after_release", policy_cfg.get("post_active_idle_ask_threshold", 20.0))
+    )
+    never_active_ask_delay = float(
+        policy_cfg.get("never_active_ask_delay", policy_cfg.get("untouched_idle_ask_threshold", 60.0))
+    )
     return {
         "touch_threshold": float(tracking_cfg.get("touch_threshold", 0.12)),
         "user_absence_threshold": float(tracking_cfg.get("user_absence_threshold", 10.0)),
         "recent_touch_threshold": float(policy_cfg.get("recent_touch_threshold", 10.0)),
-        "post_active_idle_ask_threshold": float(policy_cfg.get("post_active_idle_ask_threshold", 20.0)),
-        "untouched_idle_ask_threshold": float(policy_cfg.get("untouched_idle_ask_threshold", 60.0)),
+        "ask_delay_after_release": ask_delay_after_release,
+        "never_active_ask_delay": never_active_ask_delay,
+        "post_active_idle_ask_threshold": ask_delay_after_release,
+        "untouched_idle_ask_threshold": never_active_ask_delay,
         "cleanup_time_threshold": float(policy_cfg.get("cleanup_time_threshold", 30.0)),
         "stationary_threshold": float(policy_cfg.get("stationary_threshold", 3.0)),
         "confidence_threshold": float(policy_cfg.get("confidence_threshold", 0.65)),
@@ -244,15 +252,18 @@ def apply_live_safety_guard(cups: list[dict], predictions: list[dict], user_stat
         hand_distance = float(cup.get("hand_distance", 999.0))
         used_cup_candidate = bool(cup.get("used_cup_candidate", 0))
         user_present = int(user_state.get("user_present", 0))
+        time_since_release = float(cup.get("time_since_release", 999.0))
+        stationary_time = float(cup.get("stationary_time", 0.0))
+        release_count = int(cup.get("release_count", 0))
         active_and_near = bool(hand.get("hand_visible")) and bool(cup.get("is_active_cup", 0)) and hand_distance < thresholds["touch_threshold"]
         cleanup_ready = (
             user_present == 0
             and float(user_state.get("user_absent_time", 0.0)) > thresholds["user_absence_threshold"]
-            and float(cup.get("stationary_time", 0.0)) > thresholds["stationary_threshold"]
+            and stationary_time > thresholds["stationary_threshold"]
         ) or (
             user_present == 0
             and float(cup.get("last_touched_time", 999.0)) > thresholds["cleanup_time_threshold"]
-            and float(cup.get("stationary_time", 0.0)) > thresholds["stationary_threshold"]
+            and stationary_time > thresholds["stationary_threshold"]
         )
 
         action = str(prediction.get("action", raw_action))
@@ -262,13 +273,26 @@ def apply_live_safety_guard(cups: list[dict], predictions: list[dict], user_stat
         if active_and_near:
             action = "WAIT"
             reason = "safety_wait_override"
+        elif (
+            action == "ASK"
+            and user_present == 1
+            and used_cup_candidate
+            and (
+                release_count <= 0
+                or time_since_release < thresholds["ask_delay_after_release"]
+                or stationary_time < thresholds["ask_delay_after_release"]
+            )
+        ):
+            action = "IDLE"
+            reason = "ask_delay_after_release_guard"
         elif action == "CLEANUP_CANDIDATE" and confidence < thresholds["confidence_threshold"]:
             action = "ASK" if used_cup_candidate else "IDLE"
             reason = "low_confidence_cleanup_guard"
             uncertainty_override = True
         elif action == "ASK" and user_present == 1 and not used_cup_candidate:
-            action = "IDLE"
-            reason = "unused_cup_ask_suppressed"
+            if stationary_time < thresholds["never_active_ask_delay"]:
+                action = "IDLE"
+                reason = "never_active_ask_delay_guard"
         elif action == "CLEANUP_CANDIDATE" and not cleanup_ready:
             action = "ASK" if used_cup_candidate else "IDLE"
             reason = "cleanup_requires_abandonment"
@@ -301,19 +325,22 @@ def apply_live_arbitration(cups: list[dict], predictions: list[dict], user_state
         hand_distance = float(cup.get("hand_distance", 999.0))
         used_cup_candidate = bool(cup.get("used_cup_candidate", 0))
         user_present = int(user_state.get("user_present", 0))
+        release_count = int(cup.get("release_count", 0))
         active_and_near = bool(hand.get("hand_visible")) and bool(cup.get("is_active_cup", 0)) and hand_distance < thresholds["touch_threshold"]
         post_active_idle_ready = (
             user_present == 1
             and used_cup_candidate
+            and release_count > 0
             and not active_and_near
             and hand_distance >= thresholds["touch_threshold"]
-            and float(cup.get("last_touched_time", 999.0)) >= thresholds["post_active_idle_ask_threshold"]
+            and float(cup.get("time_since_release", 999.0)) >= thresholds["ask_delay_after_release"]
+            and float(cup.get("stationary_time", 0.0)) >= thresholds["ask_delay_after_release"]
         )
         untouched_idle_ready = (
             user_present == 1
             and not used_cup_candidate
             and not active_and_near
-            and float(cup.get("stationary_time", 0.0)) >= thresholds["untouched_idle_ask_threshold"]
+            and float(cup.get("stationary_time", 0.0)) >= thresholds["never_active_ask_delay"]
         )
         cleanup_ready = (
             user_present == 0
@@ -341,7 +368,16 @@ def apply_live_arbitration(cups: list[dict], predictions: list[dict], user_state
         elif user_present == 1 and not used_cup_candidate:
             action = "IDLE"
             reason = "present_unused_idle_suppression"
-        elif user_present == 1 and used_cup_candidate and hand_distance >= thresholds["touch_threshold"] and float(cup.get("last_touched_time", 999.0)) < thresholds["post_active_idle_ask_threshold"]:
+        elif (
+            user_present == 1
+            and used_cup_candidate
+            and (
+                release_count <= 0
+                or hand_distance < thresholds["touch_threshold"]
+                or float(cup.get("time_since_release", 999.0)) < thresholds["ask_delay_after_release"]
+                or float(cup.get("stationary_time", 0.0)) < thresholds["ask_delay_after_release"]
+            )
+        ):
             action = "IDLE"
             reason = "used_cup_idle_grace_period"
         elif action == "CLEANUP_CANDIDATE" and confidence < thresholds["confidence_threshold"]:
