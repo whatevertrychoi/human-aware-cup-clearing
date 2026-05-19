@@ -14,19 +14,41 @@ from project_utils import ConfigError, get_required, load_config
 
 def expert_high_level_policy(cup_feature: dict, config: dict) -> str:
     touch_threshold = float(get_required(config, ["tracking", "touch_threshold"]))
-    if float(cup_feature["hand_distance"]) < touch_threshold:
+    tracking_cfg = config.get("tracking", {}) if isinstance(config, dict) else {}
+    policy_cfg = config.get("policy", {}) if isinstance(config, dict) else {}
+    recent_touch_threshold = float(policy_cfg.get("recent_touch_threshold", 10.0))
+    cleanup_time_threshold = float(policy_cfg.get("cleanup_time_threshold", 30.0))
+    user_absence_threshold = float(tracking_cfg.get("user_absence_threshold", 10.0))
+    stationary_threshold = float(policy_cfg.get("stationary_threshold", 3.0))
+
+    is_active_cup = bool(cup_feature.get("is_active_cup", 0))
+    used_cup_candidate = bool(cup_feature.get("used_cup_candidate", 0))
+    user_present = int(cup_feature.get("user_present", 0))
+    hand_distance = float(cup_feature.get("hand_distance", 999.0))
+    last_touched_time = float(cup_feature.get("last_touched_time", 999.0))
+    user_absent_time = float(cup_feature.get("user_absent_time", 0.0))
+    time_since_release = float(cup_feature.get("time_since_release", 999.0))
+    stationary_time = float(cup_feature.get("stationary_time", 0.0))
+
+    if is_active_cup and hand_distance < touch_threshold:
         return "WAIT"
 
-    if int(cup_feature["user_present"]) == 1 and float(cup_feature["last_touched_time"]) < 10:
+    released_recently = (
+        time_since_release <= recent_touch_threshold or last_touched_time <= recent_touch_threshold
+    )
+    if used_cup_candidate and user_present == 1 and hand_distance >= touch_threshold and released_recently:
         return "ASK"
 
-    if int(cup_feature["user_present"]) == 0 and float(cup_feature["user_absent_time"]) > 10:
+    if user_present == 1 and not used_cup_candidate:
+        return "IDLE"
+
+    if user_present == 0 and user_absent_time > user_absence_threshold and stationary_time > stationary_threshold:
         return "CLEANUP_CANDIDATE"
 
-    if float(cup_feature["last_touched_time"]) > 30:
+    if last_touched_time > cleanup_time_threshold and stationary_time > stationary_threshold:
         return "CLEANUP_CANDIDATE"
 
-    return "ASK"
+    return "ASK" if used_cup_candidate else "IDLE"
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", required=True, help="Path to config.yaml")
     parser.add_argument(
         "--sample",
-        default='{"hand_distance":0.2,"user_present":1,"last_touched_time":5,"user_absent_time":0}',
+        default='{"hand_distance":0.2,"user_present":1,"last_touched_time":5,"user_absent_time":0,"is_active_cup":0,"used_cup_candidate":1,"time_since_release":2.0,"stationary_time":4.0}',
         help="JSON dict representing a single cup feature",
     )
     return parser.parse_args()
@@ -55,4 +77,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

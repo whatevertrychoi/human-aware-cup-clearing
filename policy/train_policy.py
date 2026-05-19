@@ -21,7 +21,7 @@ from project_utils import ConfigError, ensure_parent, get_required, load_config
 
 
 DEFAULT_CONFIG = ROOT / "configs" / "config.yaml"
-VALID_LABELS = ["WAIT", "ASK", "CLEANUP_CANDIDATE"]
+VALID_LABELS = ["WAIT", "ASK", "IDLE", "CLEANUP_CANDIDATE"]
 
 
 def create_model(algo: str):
@@ -102,6 +102,20 @@ def compute_safety_metrics(y_true: pd.Series, y_pred: list[str], ask_override_co
     }
 
 
+def validate_feature_names(feature_names: list[str], df: pd.DataFrame) -> list[str]:
+    missing_columns = [column for column in feature_names + ["label"] if column not in df.columns]
+    if missing_columns:
+        return missing_columns
+
+    forbidden = {"cup_id", "color"}
+    present_forbidden = [feature for feature in feature_names if feature in forbidden]
+    if present_forbidden:
+        raise ValueError(
+            f"Model input features must not include identity helpers such as cup_id or color: {present_forbidden}"
+        )
+    return []
+
+
 def build_output_paths(model_path: Path) -> dict[str, Path]:
     results_dir = model_path.parent
     suffix = ""
@@ -141,7 +155,11 @@ def main() -> int:
 
     df = pd.read_csv(data_path)
     df = preprocess_features(df, config)
-    missing_columns = [column for column in feature_names + ["label"] if column not in df.columns]
+    try:
+        missing_columns = validate_feature_names(feature_names, df)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}")
+        return 1
     if missing_columns:
         print(f"[ERROR] Dataset is missing required columns: {missing_columns}")
         return 1

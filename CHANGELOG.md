@@ -7,6 +7,21 @@
 - Connect mock cleanup skills to Doosan M0609 robot interfaces
 - Expand evaluation summaries and ablation records
 
+## v0.5-live-policy-inference
+
+### Added
+- Trajectory-aware active-cup arbitration on top of live model inference
+- `IDLE` suppression for untouched cups in multi-cup scenes
+- Live overlay for `ACTIVE`, `USED`, confidence, and tracker timing fields
+- Trajectory-aware tracker outputs such as `time_near_cup`, `time_since_release`, `release_count`, and `stationary_time`
+
+### Changed
+- Updated expert-rule labeling to support `IDLE` in trajectory-aware data collection
+- Updated real interaction recorder to save active-cup and trajectory features
+
+### Notes
+- The main fix in this version is reducing unnecessary cup-wise `ASK` prompts by requiring trajectory evidence before a cup can become an `ASK` target
+
 ## v0.4-real-interaction-dataset
 
 ### Added

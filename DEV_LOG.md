@@ -276,6 +276,41 @@
 - Compare mock-trained and real-trained policy behavior
 - Check whether perfect validation metrics reflect true generalization or rule-label shortcut learning
 
+## 2026-05-19 - v0.5 Live Policy Inference
+
+### Done
+
+- Added trajectory-aware active-cup arbitration to the live-policy path in `main_demo.py`
+- Updated `InteractionTracker` to expose `active_cup_id`, `is_active_cup`, `time_near_cup`, `time_since_release`, `release_count`, `cup_motion_distance`, `stationary_time`, `was_moved`, and `used_cup_candidate`
+- Added `IDLE` suppression for untouched cups when the user is still present
+- Updated `record_interaction_dataset.py` to save trajectory-aware interaction features
+- Updated `expert_high_level_policy` to support trajectory-aware `WAIT`, `ASK`, `IDLE`, and `CLEANUP_CANDIDATE`
+
+### Test
+
+- `python -m py_compile main_demo.py tracking/interaction_tracker.py policy/infer_policy.py policy/expert_policy.py data_collection/record_interaction_dataset.py`
+- Runtime target:
+- `python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_real.joblib`
+
+### Result
+
+- Live inference now uses a separate arbitration layer instead of directly overlaying independent cup-wise model predictions
+- `ASK` is restricted to cups with real trajectory evidence
+- Unused cups can remain `IDLE` even in multi-cup scenes where one other cup is active
+- The overlay now exposes `ACTIVE`, `USED`, `time_near_cup`, `stationary_time`, and release-related state for debugging
+
+### Issue
+
+- Existing real interaction CSV files were collected before the new trajectory-aware labels and may need supplemental `IDLE` and stronger release/motion scenes
+- The current trained model still uses the older feature set, so arbitration remains the main live-behavior safeguard until a trajectory-aware retraining pass is completed
+
+### Next
+
+- Collect supplemental `IDLE` scenes where the user is present but no cup is touched
+- Collect one-active-cup multi-cup scenes so untouched cups remain `IDLE`
+- Collect moved-and-released scenes and long stationary abandonment scenes
+- Merge the supplemental data and retrain the policy with the expanded feature set and `IDLE` label
+
 ## Template
 
 Copy this section for future work days.

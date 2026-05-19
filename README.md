@@ -12,13 +12,18 @@ High-level actions:
 2. `ASK`
 3. `CLEANUP_CANDIDATE`
 
+Trajectory-aware live actions:
+
+1. `WAIT`
+2. `ASK`
+3. `IDLE`
+4. `CLEANUP_CANDIDATE`
+
 Final robot skills:
 
 1. `CLEAR`
 2. `SPILL_SAFE_CLEAR`
 3. `SKIP`
-
-The current implementation first validates the full behavior with a mock robot pipeline and then expands toward real perception and Doosan motion integration.
 
 ## Conservative Safety-First Policy
 
@@ -28,28 +33,10 @@ The policy is intentionally conservative: uncertain cases are routed to ASK rath
 
 Decision philosophy:
 
-1. If the situation is clearly risky, choose `WAIT`
-2. If the situation is ambiguous, choose `ASK`
-3. Only choose `CLEANUP_CANDIDATE` when cleanup is sufficiently safe
-4. Always run local liquid verification before final pickup behavior
-
-Safety-first priority:
-
-1. `WAIT` is the highest-priority safety action
-   - Use `WAIT` when the hand is too close to the cup
-   - Use `WAIT` when the hand occludes the cup or tracking is unstable
-   - Use `WAIT` when cup detection confidence is too low for safe action
-2. `ASK` is the ambiguity-handling action
-   - Use `ASK` when the user is present and the cup was touched recently
-   - Use `ASK` when user presence is uncertain
-   - Use `ASK` when the model confidence is below the confidence threshold
-   - Use `ASK` instead of aggressive cleanup in uncertain cases
-3. `CLEANUP_CANDIDATE` should be assigned strictly
-   - The hand should be far enough away
-   - Recent usage should be sufficiently old
-   - The user should be absent or the cup should be clearly abandoned
-   - Detection and tracking should be stable
-   - Model confidence should be high enough
+1. If the situation is clearly risky, choose `WAIT`.
+2. If the situation is ambiguous, choose `ASK`.
+3. Only choose `CLEANUP_CANDIDATE` when cleanup is sufficiently safe.
+4. Always run local liquid verification before final pickup behavior.
 
 Current uncertainty-aware policy logic:
 
@@ -64,6 +51,42 @@ else:
 
 This means the system is allowed to ask more often than strictly necessary, but it should avoid wrong cleanup whenever possible.
 
+## Trajectory-Aware Live Policy
+
+The older live-policy path treated cups too independently, so unused cups could still surface as `ASK`. The current live-policy layer adds active-cup arbitration and trajectory-aware suppression on top of the trained model.
+
+Core arbitration rules:
+
+1. `WAIT`
+   - The cup is the current `active_cup`.
+   - A hand is visible.
+   - `hand_distance < touch_threshold`.
+2. `ASK`
+   - `used_cup_candidate = True`.
+   - `user_present = 1`.
+   - The hand has been released from the cup recently.
+3. `IDLE`
+   - `user_present = 1`.
+   - `used_cup_candidate = False`.
+   - The hand is not near the cup.
+4. `CLEANUP_CANDIDATE`
+   - The user has been absent long enough and the cup has stayed stationary long enough.
+   - Or the cup has been untouched for a long time and is stationary.
+
+Current trajectory-aware tracker fields:
+
+- `active_cup_id`
+- `is_active_cup`
+- `time_near_cup`
+- `time_since_release`
+- `release_count`
+- `cup_motion_distance`
+- `stationary_time`
+- `was_moved`
+- `used_cup_candidate`
+
+This layer ensures that only cups with actual interaction evidence can become `ASK` targets, while untouched cups stay suppressed as `IDLE`.
+
 ## Two-Stage Perception
 
 This project uses a two-stage perception design.
@@ -74,7 +97,7 @@ This project uses a two-stage perception design.
    - Detect hand position
    - Estimate user presence
    - Update interaction history
-   - Predict `WAIT`, `ASK`, or `CLEANUP_CANDIDATE`
+   - Predict `WAIT`, `ASK`, `IDLE`, or `CLEANUP_CANDIDATE`
 2. Local perception with an eye-in-hand camera
    - Move close to the target cup
    - Inspect the cup interior
@@ -87,16 +110,15 @@ This separation is important because a global camera may not reliably see cup co
 
 1. Observe cups, hand, and user state from the global camera.
 2. Update interaction history for each cup.
-3. Predict `WAIT`, `ASK`, or `CLEANUP_CANDIDATE`.
-4. If the action is `WAIT`, do nothing.
-5. If the action is `ASK`, prompt the user.
-6. If the user says no, execute `SKIP`.
-7. If the user says yes, or if the cup is already a `CLEANUP_CANDIDATE`, move in for local verification.
-8. Verify cup interior with the local camera.
-9. If `EMPTY`, execute `CLEAR`.
-10. If `NON_EMPTY`, execute `SPILL_SAFE_CLEAR`.
-
-The system does not directly jump from uncertain global perception to cleanup. Even after `CLEANUP_CANDIDATE` or `ASK -> yes`, the final action is delayed until local liquid verification confirms how to move the cup safely.
+3. Predict a model raw action.
+4. Apply trajectory-aware arbitration for `WAIT`, `ASK`, `IDLE`, or `CLEANUP_CANDIDATE`.
+5. If the action is `WAIT` or `IDLE`, do nothing.
+6. If the action is `ASK`, prompt the user.
+7. If the user says no, execute `SKIP`.
+8. If the user says yes, or if the cup is already a `CLEANUP_CANDIDATE`, move in for local verification.
+9. Verify cup interior with the local camera.
+10. If `EMPTY`, execute `CLEAR`.
+11. If `NON_EMPTY`, execute `SPILL_SAFE_CLEAR`.
 
 ## Repository Scope
 
@@ -104,13 +126,11 @@ Git is used as a portfolio record, so only code, configuration, documentation, a
 
 Included in Git:
 
-- Source code in `perception/`, `tracking/`, `policy/`, `robot/`
+- Source code in `perception/`, `tracking/`, `policy/`, `robot/`, `data_collection/`, and `tools/`
 - Entry scripts such as `main_demo.py` and `project_utils.py`
 - Config and environment files such as `configs/config.yaml`, `.gitignore`, and `requirements.txt`
 - Documentation such as `README.md`, `CHANGELOG.md`, and `DEV_LOG.md`
-- Small outputs such as `results/classification_report.txt`, `results/confusion_matrix.png`, `results/evaluation_summary.csv`
-- Small mock CSV files in `data/processed/`
-- Portfolio images in `docs/sample_images/` and `docs/demo_screenshots/`
+- Small outputs such as evaluation summaries and representative CSV files in `data/processed/`
 
 Excluded from Git:
 
@@ -124,21 +144,22 @@ Excluded from Git:
 
 ```text
 cup_cleanup/
-├─ README.md
-├─ CHANGELOG.md
-├─ DEV_LOG.md
-├─ requirements.txt
-├─ .gitignore
-├─ main_demo.py
-├─ project_utils.py
-├─ configs/
-├─ perception/
-├─ policy/
-├─ tracking/
-├─ robot/
-├─ data/
-├─ results/
-└─ docs/
+├── README.md
+├── CHANGELOG.md
+├── DEV_LOG.md
+├── requirements.txt
+├── .gitignore
+├── main_demo.py
+├── project_utils.py
+├── configs/
+├── perception/
+├── policy/
+├── tracking/
+├── robot/
+├── data_collection/
+├── tools/
+├── data/
+└── results/
 ```
 
 ## Installation
@@ -149,13 +170,9 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Note: `mediapipe` support can vary depending on Python version. The mock pipeline does not require a camera and is the recommended first validation step.
-
 ## v0.3 Environment
 
 For `v0.3-hand-user-tracking`, use a Python 3.12 environment with the MediaPipe Solutions API.
-
-Recommended setup:
 
 ```powershell
 conda create -n cup_cleanup_mp312 python=3.12 -y
@@ -163,103 +180,25 @@ conda activate cup_cleanup_mp312
 cd C:\Users\minseok\Desktop\cup_cleanup
 pip install -r requirements.txt
 pip install mediapipe==0.10.13
-```
-
-Verify the installation:
-
-```powershell
 python -c "import mediapipe as mp; print(mp.__version__); print(hasattr(mp, 'solutions'))"
 ```
 
-The second line should print `True` for the existing `MediaPipe Hands` and `Face Detection` code to work correctly.
+The second printed line should be `True`.
 
 ## Execution Order
 
+Mock pipeline:
+
 ```bash
 python policy/generate_mock_dataset.py --out data/processed/dataset_decision.csv --n 1000
-```
-
-```bash
 python policy/train_policy.py --data data/processed/dataset_decision.csv --model results/decision_model.joblib --algo rf
-```
-
-```bash
-python main_demo.py --model results/decision_model.joblib --mock
-```
-
-Optional non-interactive demo:
-
-```bash
 python main_demo.py --model results/decision_model.joblib --mock --mock-responses y,n
 ```
 
-## Additional Scripts
-
-## Cup Dataset Capture
-
-Connect the external USB webcam and capture cup images for `v0.2-global-cup-detection`.
-
-```bash
-python tools/capture_cup_dataset.py --camera-index 0
-```
-
-If the webcam does not open, try a different camera index.
-
-```bash
-python tools/capture_cup_dataset.py --camera-index 1
-python tools/capture_cup_dataset.py --camera-index 2
-```
-
-Optional camera settings:
-
-```bash
-python tools/capture_cup_dataset.py --camera-index 1 --width 1280 --height 720 --fps 30
-```
-
-Key controls:
-
-- `g`: save a green cup image to `data/raw/green/`
-- `r`: save a red cup image to `data/raw/red/`
-- `b`: save a blue cup image to `data/raw/blue/`
-- `q` or `ESC`: quit
-
-Target collection counts:
-
-- Green: 100 images
-- Red: 100 images
-- Blue: 100 images
-
-Capture guidance:
-
-- Use the same external USB webcam placement planned for the final demo
-- Capture on the real robot work table whenever possible
-- Move cups to different positions instead of keeping them centered
-- Include scenes where cups are close to one another
-- Include lighting and shadow variation
-
-Suggested breakdown per cup:
-
-- 60 images with a single cup at varied positions
-- 25 images near other cups
-- 15 images with lighting or shadow changes
-
-After collection, the next step is `v0.2-global-cup-detection`, where `perception/detect_cups.py` can be tuned with HSV thresholds using the captured images.
-
-Cup detection:
-
-```bash
-python perception/detect_cups.py --config configs/config.yaml
-```
-
-USB webcam runtime example:
+Global cup detection:
 
 ```bash
 python perception/detect_cups.py --config configs/config.yaml --camera-index 1 --backend dshow
-```
-
-Optional mask debug view:
-
-```bash
 python perception/detect_cups.py --config configs/config.yaml --camera-index 1 --backend dshow --show-mask-debug
 ```
 
@@ -269,9 +208,43 @@ Perception debug with cups, hand, and user presence:
 python main_demo.py --camera-index 1 --backend dshow --debug-perception
 ```
 
-Interaction dataset recording:
+Live policy inference:
 
-`data/processed/dataset_decision.csv` is reserved for the v0.1 mock or synthetic dataset and should not be overwritten by real webcam recordings.
+```bash
+python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_real.joblib
+```
+
+In this mode the overlay shows:
+
+- predicted action and confidence
+- `hand_distance`
+- `touch_count`
+- `last_touched_time`
+- `user_present`
+- `user_absent_time`
+- `time_near_cup`
+- `stationary_time`
+- `used_cup_candidate`
+- `ACTIVE` and `USED` markers
+
+## Cup Dataset Capture
+
+Connect the external USB webcam and capture cup images for `v0.2-global-cup-detection`.
+
+```bash
+python tools/capture_cup_dataset.py --camera-index 1 --backend dshow
+```
+
+Key controls:
+
+- `g`: save a green cup image to `data/raw/green/`
+- `r`: save a red cup image to `data/raw/red/`
+- `b`: save a blue cup image to `data/raw/blue/`
+- `q` or `ESC`: quit
+
+## Real Interaction Dataset
+
+`data/processed/dataset_decision.csv` is reserved for the v0.1 mock or synthetic dataset and should never be overwritten by real webcam recordings.
 
 Use scene-specific output files for real interaction capture:
 
@@ -282,7 +255,7 @@ python data_collection/record_interaction_dataset.py --camera-index 1 --backend 
 python data_collection/record_interaction_dataset.py --camera-index 1 --backend dshow --out data/processed/interaction_clutter.csv --interval 0.5
 ```
 
-This recorder saves real webcam perception results at a fixed interval for behavior cloning. Each saved scene writes cup-level rows with:
+The recorder writes cup-level rows with:
 
 - `scene_id`
 - `timestamp`
@@ -295,7 +268,23 @@ This recorder saves real webcam perception results at a fixed interval for behav
 - `distance_to_tray`
 - `user_present`
 - `user_absent_time`
+- `active_cup_id`
+- `is_active_cup`
+- `time_near_cup`
+- `time_since_release`
+- `release_count`
+- `cup_motion_distance`
+- `stationary_time`
+- `was_moved`
+- `used_cup_candidate`
 - expert-rule `label`
+
+Trajectory-aware labels:
+
+- `WAIT`
+- `ASK`
+- `IDLE`
+- `CLEANUP_CANDIDATE`
 
 Recommended real interaction files:
 
@@ -310,10 +299,10 @@ Current merged real interaction dataset summary:
 - Total rows: `1547`
 - Label distribution: `ASK=717`, `WAIT=558`, `CLEANUP_CANDIDATE=272`
 - Source file row counts:
-- `interaction_green.csv=305`
-- `interaction_red.csv=266`
-- `interaction_blue.csv=193`
-- `interaction_clutter.csv=783`
+  - `interaction_green.csv=305`
+  - `interaction_red.csv=266`
+  - `interaction_blue.csv=193`
+  - `interaction_clutter.csv=783`
 
 Dataset analysis:
 
@@ -347,36 +336,21 @@ Placeholder clipping for real-data training:
 
 This prevents the model from overfitting to sentinel values such as `999` or `1000+` that represent hand-not-visible or never-touched states.
 
-Hand detection:
+Trajectory-aware dataset note:
 
-```bash
-python perception/detect_hand.py --camera-index 0
-```
-
-User presence detection:
-
-```bash
-python perception/detect_user_presence.py --camera-index 0
-```
-
-USB webcam examples:
-
-```bash
-python perception/detect_hand.py --camera-index 1 --backend dshow
-python perception/detect_user_presence.py --camera-index 1 --backend dshow
-```
-
-Local liquid detection:
-
-```bash
-python perception/detect_liquid_local.py --config configs/config.yaml
-```
+- Existing `interaction_green/red/blue/clutter.csv` files are still useful and should not be discarded.
+- Additional collection should focus on `IDLE` scenes and stronger cup-use trajectories rather than full recollection.
+- Useful supplemental scenes are:
+  - user present with no cup touched
+  - one active cup while the other cups stay idle
+  - cup moved and released
+  - user absent with long stationary cups
 
 ## Data and Results
 
 - Raw data should stay under `data/raw/` and is not committed.
 - Runtime logs should stay under `data/logs/` and are not committed.
-- Small mock datasets can be kept in `data/processed/`.
+- Small processed datasets can be kept in `data/processed/`.
 - Small evaluation artifacts can be kept in `results/`.
 - Sample visuals for the portfolio can be kept in `docs/sample_images/` and `docs/demo_screenshots/`.
 
@@ -416,8 +390,9 @@ Current real-data validation metrics:
 - `v0.2-global-cup-detection`: HSV-based green/red/blue cup detection and debug visualization
 - `v0.3-hand-user-tracking`: MediaPipe Hands, user presence, hand-cup distance, interaction tracking
 - `v0.4-real-interaction-dataset`: real interaction dataset merging, analysis, and policy retraining
-- `v0.5-human-in-the-loop`: yes/no ASK interface and `SKIP` flow
-- `v0.6-local-liquid-verification`: ROI-based local liquid detection and `CLEAR` vs `SPILL_SAFE_CLEAR`
+- `v0.5-live-policy-inference`: trajectory-aware active-cup arbitration and live real-time policy overlay
+- `v0.6-human-in-the-loop`: yes/no ASK interface and `SKIP` flow
+- `v0.7-local-liquid-verification`: ROI-based local liquid detection and `CLEAR` vs `SPILL_SAFE_CLEAR`
 - `v1.0-final-demo`: integrated pipeline, final documentation, screenshots, evaluation summary
 
 ## Development Logging
@@ -427,7 +402,7 @@ Current real-data validation metrics:
 
 ## Next Steps
 
-- Connect the global camera to real cup and hand observations
-- Improve dataset realism and evaluation reporting
-- Replace mock local liquid frames with real gripper-camera input
-- Connect Doosan M0609 skills for `CLEAR` and `SPILL_SAFE_CLEAR`
+- Collect supplemental `IDLE` and stronger trajectory scenes
+- Retrain the policy with trajectory-aware labels once the new scenes are merged
+- Connect live `ASK` outputs to the real human-in-the-loop confirmation flow
+- Keep local liquid verification as the final gate before any physical cleanup

@@ -40,6 +40,15 @@ FIELDNAMES = [
     "distance_to_tray",
     "user_present",
     "user_absent_time",
+    "active_cup_id",
+    "is_active_cup",
+    "time_near_cup",
+    "time_since_release",
+    "release_count",
+    "cup_motion_distance",
+    "stationary_time",
+    "was_moved",
+    "used_cup_candidate",
     "label",
 ]
 MOCK_DATASET_NAME = "dataset_decision.csv"
@@ -137,6 +146,15 @@ def make_dataset_rows(
             "distance_to_tray": round(compute_distance_to_tray(x_norm, y_norm, config), 4),
             "user_present": int(user_state.get("user_present", 0)),
             "user_absent_time": round(float(user_state.get("user_absent_time", 0.0)), 3),
+            "active_cup_id": int(cup["active_cup_id"]) if cup.get("active_cup_id") is not None else -1,
+            "is_active_cup": int(cup.get("is_active_cup", 0)),
+            "time_near_cup": round(float(cup.get("time_near_cup", 0.0)), 3),
+            "time_since_release": round(float(cup.get("time_since_release", 999.0)), 3),
+            "release_count": int(cup.get("release_count", 0)),
+            "cup_motion_distance": round(float(cup.get("cup_motion_distance", 0.0)), 4),
+            "stationary_time": round(float(cup.get("stationary_time", 0.0)), 3),
+            "was_moved": int(cup.get("was_moved", 0)),
+            "used_cup_candidate": int(cup.get("used_cup_candidate", 0)),
         }
         feature_row["label"] = expert_high_level_policy(feature_row, config)
         rows.append(feature_row)
@@ -209,6 +227,22 @@ def draw_debug_overlay(
         cv2.rectangle(frame, (x1, y1), (x2, y2), draw_color, 2)
         cv2.circle(frame, (cx, cy), 5, draw_color, -1)
         cv2.putText(frame, label, (x1, max(20, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, draw_color, 2)
+        cv2.putText(
+            frame,
+            (
+                f"near={cup.get('time_near_cup', 0.0):.1f}s "
+                f"rel={cup.get('release_count', 0)} "
+                f"stat={cup.get('stationary_time', 0.0):.1f}s "
+                f"used={cup.get('used_cup_candidate', 0)}"
+            ),
+            (x1, min(frame.shape[0] - 10, y2 + 18)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            draw_color,
+            1,
+        )
+        if cup.get("is_active_cup", 0):
+            cv2.putText(frame, "ACTIVE", (x1, min(frame.shape[0] - 28, y2 + 36)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
 
 
 def main() -> int:
@@ -268,6 +302,10 @@ def main() -> int:
     interaction_tracker = InteractionTracker(
         touch_threshold=float(tracking_cfg.get("touch_threshold", 0.12)),
         default_last_touched_time=float(tracking_cfg.get("default_last_touched_time", 999.0)),
+        time_near_threshold=float(tracking_cfg.get("time_near_threshold", 0.8)),
+        motion_distance_threshold=float(tracking_cfg.get("motion_distance_threshold", 0.03)),
+        stationary_motion_threshold=float(tracking_cfg.get("stationary_motion_threshold", 0.01)),
+        touch_count_used_threshold=int(tracking_cfg.get("touch_count_used_threshold", 1)),
     )
     user_presence_tracker = UserPresenceTracker(
         absence_threshold=float(tracking_cfg.get("user_absence_threshold", 10.0))

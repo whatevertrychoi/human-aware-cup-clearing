@@ -25,6 +25,22 @@ def load_model_bundle(model_path: str | Path) -> dict:
     return joblib.load(path)
 
 
+def preprocess_inference_frame(frame: pd.DataFrame, model_bundle: dict) -> pd.DataFrame:
+    processed = frame.copy()
+    preprocessing = model_bundle.get("preprocessing", {})
+    hand_distance_clip_upper = float(preprocessing.get("hand_distance_clip_upper", 2.0))
+    last_touched_time_clip_upper = float(preprocessing.get("last_touched_time_clip_upper", 60.0))
+    user_absent_time_clip_upper = float(preprocessing.get("user_absent_time_clip_upper", 60.0))
+
+    if "hand_distance" in processed.columns:
+        processed["hand_distance"] = processed["hand_distance"].clip(upper=hand_distance_clip_upper)
+    if "last_touched_time" in processed.columns:
+        processed["last_touched_time"] = processed["last_touched_time"].clip(upper=last_touched_time_clip_upper)
+    if "user_absent_time" in processed.columns:
+        processed["user_absent_time"] = processed["user_absent_time"].clip(upper=user_absent_time_clip_upper)
+    return processed
+
+
 def predict_actions(cup_features: dict | list[dict], model_bundle: dict, config: dict) -> list[dict]:
     items = [cup_features] if isinstance(cup_features, dict) else list(cup_features)
     feature_names = model_bundle["feature_names"]
@@ -34,6 +50,7 @@ def predict_actions(cup_features: dict | list[dict], model_bundle: dict, config:
     if missing:
         raise ValueError(f"Input cup features are missing required fields: {missing}")
 
+    frame = preprocess_inference_frame(frame, model_bundle)
     x_data = frame[feature_names]
     model = model_bundle["model"]
     raw_actions = model.predict(x_data)
@@ -93,4 +110,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
