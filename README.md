@@ -224,6 +224,26 @@ Live policy inference:
 python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_real.joblib
 ```
 
+Live policy evaluation modes:
+
+```bash
+python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode model_only
+python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode safety_guard
+python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode arbitration
+```
+
+Mode interpretation:
+
+- `model_only`: validates the Behavior Cloning policy itself without safety overrides
+- `safety_guard`: keeps the model prediction first and only blocks clearly unsafe or unnecessary actions
+- `arbitration`: applies stronger rule-based stabilization for demo presentation
+
+Optional live evaluation logging:
+
+```bash
+python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode model_only --log-live-eval logs/live_policy_eval_model_only.csv
+```
+
 In this mode the overlay shows:
 
 - predicted action and confidence

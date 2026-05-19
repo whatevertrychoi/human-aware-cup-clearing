@@ -34,6 +34,8 @@ tracking:
 policy:
   confidence_threshold: 0.65
   recent_touch_threshold: 10.0
+  post_active_idle_ask_threshold: 20.0
+  untouched_idle_ask_threshold: 60.0
   cleanup_time_threshold: 30.0
   stationary_threshold: 3.0
   model_input_features:

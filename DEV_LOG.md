@@ -347,6 +347,18 @@
 - `cleanup_candidate_precision=1.0000`
 - `WAIT recall=1.0000`
 
+### Live Evaluation Mode Update
+
+- Added three live policy modes in `main_demo.py`:
+- `model_only`
+- `safety_guard`
+- `arbitration`
+- Added live evaluation CSV logging with `--log-live-eval`
+- The intended comparison is:
+- `model_only` for pure Behavior Cloning inspection
+- `safety_guard` for model-first deployment behavior
+- `arbitration` for rule-heavier demo stabilization
+
 ## Template
 
 Copy this section for future work days.
