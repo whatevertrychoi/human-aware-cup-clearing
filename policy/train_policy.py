@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from project_utils import ConfigError, ensure_parent, get_required, load_config
 
 
 DEFAULT_CONFIG = ROOT / "configs" / "config.yaml"
+VALID_LABELS = ["WAIT", "ASK", "CLEANUP_CANDIDATE"]
 
 
 def create_model(algo: str):
@@ -28,6 +30,90 @@ def create_model(algo: str):
     if algo == "mlp":
         return MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42)
     raise ValueError(f"Unsupported algorithm: {algo}. Choose rf or mlp.")
+
+
+def get_preprocessing_config(config: dict) -> dict:
+    defaults = {
+        "hand_distance_clip_upper": 2.0,
+        "last_touched_time_clip_upper": 60.0,
+        "user_absent_time_clip_upper": 60.0,
+    }
+    policy_cfg = config.get("policy", {}) if isinstance(config, dict) else {}
+    preprocess_cfg = policy_cfg.get("preprocessing", {}) if isinstance(policy_cfg, dict) else {}
+    for key in defaults:
+        if key in preprocess_cfg:
+            defaults[key] = float(preprocess_cfg[key])
+    return defaults
+
+
+def preprocess_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    processed = df.copy()
+    clip_cfg = get_preprocessing_config(config)
+    if "hand_distance" in processed.columns:
+        processed["hand_distance"] = processed["hand_distance"].clip(upper=clip_cfg["hand_distance_clip_upper"])
+    if "last_touched_time" in processed.columns:
+        processed["last_touched_time"] = processed["last_touched_time"].clip(upper=clip_cfg["last_touched_time_clip_upper"])
+    if "user_absent_time" in processed.columns:
+        processed["user_absent_time"] = processed["user_absent_time"].clip(upper=clip_cfg["user_absent_time_clip_upper"])
+    return processed
+
+
+def apply_conservative_override(raw_predictions, probabilities, threshold: float) -> tuple[list[str], int]:
+    adjusted: list[str] = []
+    override_count = 0
+    for raw_action, probability_vector in zip(raw_predictions, probabilities):
+        confidence = float(max(probability_vector))
+        if raw_action == "WAIT":
+            adjusted.append("WAIT")
+        elif confidence < threshold:
+            adjusted.append("ASK")
+            override_count += 1
+        else:
+            adjusted.append(str(raw_action))
+    return adjusted, override_count
+
+
+def compute_safety_metrics(y_true: pd.Series, y_pred: list[str], ask_override_count: int) -> dict[str, float]:
+    y_true_series = pd.Series(y_true).reset_index(drop=True)
+    y_pred_series = pd.Series(y_pred)
+    risky_mask = y_true_series.isin(["WAIT", "ASK"])
+    predicted_cleanup_mask = y_pred_series == "CLEANUP_CANDIDATE"
+    true_cleanup_mask = y_true_series == "CLEANUP_CANDIDATE"
+    true_wait_mask = y_true_series == "WAIT"
+
+    wrong_cleanup_rate = float(((risky_mask) & predicted_cleanup_mask).sum()) / float(max(len(y_true_series), 1))
+    cleanup_precision_den = int(predicted_cleanup_mask.sum())
+    cleanup_candidate_precision = (
+        float((predicted_cleanup_mask & true_cleanup_mask).sum()) / float(cleanup_precision_den)
+        if cleanup_precision_den > 0
+        else 0.0
+    )
+    wait_recall_den = int(true_wait_mask.sum())
+    wait_recall = (
+        float(((y_pred_series == "WAIT") & true_wait_mask).sum()) / float(wait_recall_den)
+        if wait_recall_den > 0
+        else 0.0
+    )
+    return {
+        "wrong_cleanup_rate": wrong_cleanup_rate,
+        "ask_override_count": float(ask_override_count),
+        "cleanup_candidate_precision": cleanup_candidate_precision,
+        "wait_recall": wait_recall,
+    }
+
+
+def build_output_paths(model_path: Path) -> dict[str, Path]:
+    results_dir = model_path.parent
+    suffix = ""
+    if model_path.stem.startswith("decision_model"):
+        suffix = model_path.stem[len("decision_model"):]
+    else:
+        suffix = f"_{model_path.stem}"
+    return {
+        "report": results_dir / f"classification_report{suffix}.txt",
+        "confusion": results_dir / f"confusion_matrix{suffix}.png",
+        "evaluation": results_dir / f"evaluation_summary{suffix}.csv",
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,9 +140,14 @@ def main() -> int:
         return 1
 
     df = pd.read_csv(data_path)
+    df = preprocess_features(df, config)
     missing_columns = [column for column in feature_names + ["label"] if column not in df.columns]
     if missing_columns:
         print(f"[ERROR] Dataset is missing required columns: {missing_columns}")
+        return 1
+    invalid_labels = sorted(set(df["label"].dropna().unique()) - set(VALID_LABELS))
+    if invalid_labels:
+        print(f"[ERROR] Dataset contains invalid labels: {invalid_labels}")
         return 1
 
     x_data = df[feature_names]
@@ -71,11 +162,15 @@ def main() -> int:
 
     model = create_model(args.algo)
     model.fit(x_train, y_train)
-    predictions = model.predict(x_val)
+    raw_predictions = model.predict(x_val)
+    probabilities = model.predict_proba(x_val)
     labels = sorted(y_data.unique())
+    confidence_threshold = float(get_required(config, ["policy", "confidence_threshold"]))
+    predictions, ask_override_count = apply_conservative_override(raw_predictions, probabilities, confidence_threshold)
     accuracy = accuracy_score(y_val, predictions)
     report = classification_report(y_val, predictions, labels=labels)
     matrix = confusion_matrix(y_val, predictions, labels=labels)
+    safety_metrics = compute_safety_metrics(y_val, predictions, ask_override_count)
 
     model_path = ensure_parent(args.model)
     bundle = {
@@ -83,29 +178,52 @@ def main() -> int:
         "feature_names": list(feature_names),
         "labels": labels,
         "algo": args.algo,
+        "preprocessing": get_preprocessing_config(config),
+        "confidence_threshold": confidence_threshold,
     }
     joblib.dump(bundle, model_path)
 
-    results_dir = model_path.parent
-    report_path = ensure_parent(results_dir / "classification_report.txt")
-    report_path.write_text(f"accuracy: {accuracy:.4f}\n\n{report}", encoding="utf-8")
+    output_paths = build_output_paths(model_path)
+    report_path = ensure_parent(output_paths["report"])
+    metrics_block = "\n".join(f"{key}: {value:.4f}" for key, value in safety_metrics.items() if key != "ask_override_count")
+    report_path.write_text(
+        f"accuracy: {accuracy:.4f}\n"
+        f"ask_override_count: {int(ask_override_count)}\n"
+        f"{metrics_block}\n\n{report}",
+        encoding="utf-8",
+    )
 
     figure, axis = plt.subplots(figsize=(6, 6))
     ConfusionMatrixDisplay(confusion_matrix=matrix, display_labels=labels).plot(ax=axis, cmap="Blues", colorbar=False)
     axis.set_title("Decision Policy Confusion Matrix")
     figure.tight_layout()
-    confusion_path = ensure_parent(results_dir / "confusion_matrix.png")
+    confusion_path = ensure_parent(output_paths["confusion"])
     figure.savefig(confusion_path, dpi=150)
     plt.close(figure)
 
+    evaluation_path = ensure_parent(output_paths["evaluation"])
+    with evaluation_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["dataset", "algo", "metric", "value"])
+        writer.writeheader()
+        writer.writerow({"dataset": str(data_path), "algo": args.algo, "metric": "accuracy", "value": f"{accuracy:.4f}"})
+        for key, value in safety_metrics.items():
+            metric_value = int(value) if key == "ask_override_count" else f"{value:.4f}"
+            writer.writerow({"dataset": str(data_path), "algo": args.algo, "metric": key, "value": metric_value})
+
     print(f"Validation accuracy: {accuracy:.4f}")
     print(report)
+    print("Safety metrics:")
+    for key, value in safety_metrics.items():
+        if key == "ask_override_count":
+            print(f"- {key}: {int(value)}")
+        else:
+            print(f"- {key}: {value:.4f}")
     print(f"Saved model bundle to {model_path}")
     print(f"Saved classification report to {report_path}")
     print(f"Saved confusion matrix to {confusion_path}")
+    print(f"Saved evaluation summary to {evaluation_path}")
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

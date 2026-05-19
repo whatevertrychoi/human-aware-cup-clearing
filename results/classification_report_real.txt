@@ -1,0 +1,15 @@
+accuracy: 1.0000
+ask_override_count: 0
+wrong_cleanup_rate: 0.0000
+cleanup_candidate_precision: 1.0000
+wait_recall: 1.0000
+
+                   precision    recall  f1-score   support
+
+              ASK       1.00      1.00      1.00       144
+CLEANUP_CANDIDATE       1.00      1.00      1.00        54
+             WAIT       1.00      1.00      1.00       112
+
+         accuracy                           1.00       310
+        macro avg       1.00      1.00      1.00       310
+     weighted avg       1.00      1.00      1.00       310

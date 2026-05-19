@@ -166,6 +166,116 @@
 - Expected result:
 - `True` for `hasattr(mp, 'solutions')`
 
+### Runtime Validation Update
+
+- Created and activated `cup_cleanup_mp312` conda environment with Python 3.12.
+- Installed `mediapipe==0.10.13`.
+- Verified `mp.solutions` availability:
+- `mediapipe version: 0.10.13`
+- `hasattr(mp, "solutions") == True`
+- Successfully ran:
+- `python perception/detect_hand.py --camera-index 1 --backend dshow`
+- `python main_demo.py --camera-index 1 --backend dshow --debug-perception`
+
+### Result Update
+
+- Hand center detection works on the real USB webcam feed.
+- User presence detection works in the integrated perception debug view.
+- `user_present=1`, `hand_visible=1`, `user_absent_time=0.0s` were confirmed.
+- Hand-cup distance, `touch_count`, and `last_touched_time` update correctly in the overlay.
+
+## 2026-05-19 - v0.4 Real Interaction Dataset
+
+### Done
+
+- Added `data_collection/record_interaction_dataset.py`
+- Connected cup detection, hand detection, user presence, and interaction tracking into a CSV recorder
+- Added interval-based dataset saving to reduce duplicate samples
+- Added expert-rule labels during recording for behavior cloning bootstrap
+- Added sample count and recorder status overlay
+- Protected `data/processed/dataset_decision.csv` from accidental overwrite by real interaction recordings
+- Planned scene-specific real interaction files for green, red, blue, and clutter captures
+- Added dataset merge and analysis utilities for recorded interaction CSV files
+
+### Test
+
+- `python -m py_compile data_collection/record_interaction_dataset.py`
+- `python -m py_compile data_collection/merge_interaction_datasets.py`
+- `python -m py_compile data_collection/analyze_interaction_dataset.py`
+- Runtime target:
+- `python data_collection/record_interaction_dataset.py --camera-index 1 --backend dshow --out data/processed/interaction_green.csv`
+- `python data_collection/analyze_interaction_dataset.py --data data/processed/interaction_green.csv`
+- `python data_collection/merge_interaction_datasets.py --out data/processed/interaction_dataset_all.csv`
+
+### Result
+
+- Recorder is ready to save real perception-derived interaction features to CSV
+- Each saved scene can emit one row per visible cup with an expert-rule label
+- Scene-specific CSV workflow is ready for green, red, blue, and clutter collection
+
+### Issue
+
+- Runtime hand and user recording still depends on the correct Python 3.12 plus MediaPipe Solutions environment
+- Recorded labels are rule-based bootstrap labels, not human-verified annotations
+
+### Next
+
+- Record real interaction scenes on the robot table into `interaction_green/red/blue/clutter.csv`
+- Inspect each scene CSV for feature balance and label distribution
+- Merge scene files into `interaction_dataset_all.csv`
+- Use the merged real dataset for behavior cloning retraining
+
+### Collection Update
+
+- Completed real interaction dataset collection:
+- `data/processed/interaction_green.csv`
+- `data/processed/interaction_red.csv`
+- `data/processed/interaction_blue.csv`
+- `data/processed/interaction_clutter.csv`
+
+### Merge Update
+
+- Merged interaction datasets into `data/processed/interaction_dataset_all.csv`
+- Total rows: `1547`
+- Source file row counts:
+- `interaction_green.csv`: `305`
+- `interaction_red.csv`: `266`
+- `interaction_blue.csv`: `193`
+- `interaction_clutter.csv`: `783`
+- Label distribution:
+- `ASK`: `717`
+- `WAIT`: `558`
+- `CLEANUP_CANDIDATE`: `272`
+
+### Analysis Update
+
+- `hand_distance` contains placeholder values up to `999.0`
+- `last_touched_time` contains placeholder values above `1000.0`
+- `user_absent_time` maximum is `10.630`
+- Placeholder clipping is required before training to avoid shortcut learning from sentinel values
+
+### Training Update
+
+- Trained real-data policy with:
+- `python policy/train_policy.py --data data/processed/interaction_dataset_all.csv --model results/decision_model_real.joblib --algo rf`
+- Saved real-data outputs:
+- `results/decision_model_real.joblib`
+- `results/classification_report_real.txt`
+- `results/confusion_matrix_real.png`
+- `results/evaluation_summary_real.csv`
+- Validation metrics:
+- `accuracy=1.0000`
+- `wrong_cleanup_rate=0.0000`
+- `ask_override_count=0`
+- `cleanup_candidate_precision=1.0000`
+- `WAIT recall=1.0000`
+
+### Next Update
+
+- Connect the real trained policy model to live inference paths in `main_demo.py`
+- Compare mock-trained and real-trained policy behavior
+- Check whether perfect validation metrics reflect true generalization or rule-label shortcut learning
+
 ## Template
 
 Copy this section for future work days.

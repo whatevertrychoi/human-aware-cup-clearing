@@ -3,11 +3,27 @@
 ## Unreleased
 
 ### Planned
-- Add global cup detection with HSV segmentation
-- Add MediaPipe-based hand detection and user presence tracking
 - Add local liquid verification using the gripper camera
 - Connect mock cleanup skills to Doosan M0609 robot interfaces
 - Expand evaluation summaries and ablation records
+
+## v0.4-real-interaction-dataset
+
+### Added
+- Real interaction dataset collection workflow with scene-specific CSV files
+- Dataset merging and analysis utilities
+- Real-data decision policy training pipeline
+- Safety-oriented evaluation metrics for real-data validation
+
+### Artifacts
+- `data/processed/interaction_green.csv`
+- `data/processed/interaction_red.csv`
+- `data/processed/interaction_blue.csv`
+- `data/processed/interaction_clutter.csv`
+- `data/processed/interaction_dataset_all.csv`
+- `results/classification_report_real.txt`
+- `results/confusion_matrix_real.png`
+- `results/evaluation_summary_real.csv`
 
 ## v0.1-mock-pipeline
 

@@ -269,6 +269,84 @@ Perception debug with cups, hand, and user presence:
 python main_demo.py --camera-index 1 --backend dshow --debug-perception
 ```
 
+Interaction dataset recording:
+
+`data/processed/dataset_decision.csv` is reserved for the v0.1 mock or synthetic dataset and should not be overwritten by real webcam recordings.
+
+Use scene-specific output files for real interaction capture:
+
+```bash
+python data_collection/record_interaction_dataset.py --camera-index 1 --backend dshow --out data/processed/interaction_green.csv --interval 0.5
+python data_collection/record_interaction_dataset.py --camera-index 1 --backend dshow --out data/processed/interaction_red.csv --interval 0.5
+python data_collection/record_interaction_dataset.py --camera-index 1 --backend dshow --out data/processed/interaction_blue.csv --interval 0.5
+python data_collection/record_interaction_dataset.py --camera-index 1 --backend dshow --out data/processed/interaction_clutter.csv --interval 0.5
+```
+
+This recorder saves real webcam perception results at a fixed interval for behavior cloning. Each saved scene writes cup-level rows with:
+
+- `scene_id`
+- `timestamp`
+- `cup_id`
+- `x`, `y`
+- `hand_distance`
+- `last_touched_time`
+- `touch_count`
+- `moved_recently`
+- `distance_to_tray`
+- `user_present`
+- `user_absent_time`
+- expert-rule `label`
+
+Recommended real interaction files:
+
+- `data/processed/interaction_green.csv`
+- `data/processed/interaction_red.csv`
+- `data/processed/interaction_blue.csv`
+- `data/processed/interaction_clutter.csv`
+- merged dataset: `data/processed/interaction_dataset_all.csv`
+
+Current merged real interaction dataset summary:
+
+- Total rows: `1547`
+- Label distribution: `ASK=717`, `WAIT=558`, `CLEANUP_CANDIDATE=272`
+- Source file row counts:
+- `interaction_green.csv=305`
+- `interaction_red.csv=266`
+- `interaction_blue.csv=193`
+- `interaction_clutter.csv=783`
+
+Dataset analysis:
+
+```bash
+python data_collection/analyze_interaction_dataset.py --data data/processed/interaction_green.csv
+```
+
+Dataset merge:
+
+```bash
+python data_collection/merge_interaction_datasets.py --out data/processed/interaction_dataset_all.csv
+```
+
+Real dataset policy training:
+
+```bash
+python policy/train_policy.py --data data/processed/interaction_dataset_all.csv --model results/decision_model_real.joblib --algo rf
+```
+
+Mock vs real dataset split:
+
+- Mock dataset: `data/processed/dataset_decision.csv`
+- Real scene datasets: `interaction_green.csv`, `interaction_red.csv`, `interaction_blue.csv`, `interaction_clutter.csv`
+- Real merged dataset: `data/processed/interaction_dataset_all.csv`
+
+Placeholder clipping for real-data training:
+
+- `hand_distance` is clipped to `2.0`
+- `last_touched_time` is clipped to `60.0`
+- `user_absent_time` is clipped to `60.0`
+
+This prevents the model from overfitting to sentinel values such as `999` or `1000+` that represent hand-not-visible or never-touched states.
+
 Hand detection:
 
 ```bash
@@ -308,6 +386,10 @@ Current tracked evaluation artifacts:
 - `results/confusion_matrix.png`
 - `results/evaluation_summary.csv`
 - `data/processed/dataset_decision.csv`
+- `results/classification_report_real.txt`
+- `results/confusion_matrix_real.png`
+- `results/evaluation_summary_real.csv`
+- `data/processed/interaction_dataset_all.csv`
 
 Future evaluation should emphasize safety-oriented metrics in addition to plain accuracy:
 
@@ -316,15 +398,24 @@ Future evaluation should emphasize safety-oriented metrics in addition to plain 
 - `wait_safety_success`
 - `ask_override_count`
 - `cleanup_candidate_precision`
+- `WAIT recall`
 
 The main evaluation principle is that a slightly higher ASK rate is acceptable, while wrong cleanup of a cup still in use should be treated as a major failure.
+
+Current real-data validation metrics:
+
+- `accuracy=1.0000`
+- `wrong_cleanup_rate=0.0000`
+- `ask_override_count=0`
+- `cleanup_candidate_precision=1.0000`
+- `WAIT recall=1.0000`
 
 ## Git Version Plan
 
 - `v0.1-mock-pipeline`: mock dataset generator, expert policy, training, inference, mock robot demo
 - `v0.2-global-cup-detection`: HSV-based green/red/blue cup detection and debug visualization
 - `v0.3-hand-user-tracking`: MediaPipe Hands, user presence, hand-cup distance, interaction tracking
-- `v0.4-decision-policy`: policy training refinements, confusion matrix, classification report, evaluation scripts
+- `v0.4-real-interaction-dataset`: real interaction dataset merging, analysis, and policy retraining
 - `v0.5-human-in-the-loop`: yes/no ASK interface and `SKIP` flow
 - `v0.6-local-liquid-verification`: ROI-based local liquid detection and `CLEAR` vs `SPILL_SAFE_CLEAR`
 - `v1.0-final-demo`: integrated pipeline, final documentation, screenshots, evaluation summary
