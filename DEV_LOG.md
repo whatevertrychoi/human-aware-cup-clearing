@@ -393,6 +393,70 @@
 - global webcam = cleanup candidate selection
 - local or gripper camera = EMPTY/NON_EMPTY verification before `READY_TO_CLEAR` or `SPILL_SAFE_CLEAR`
 
+## 2026-05-20 - v0.6 Social State Machine
+
+### Done
+
+- Added response-aware social state transitions on top of live policy inference
+- Added `ASK_PENDING`, `ASK_COOLDOWN`, and `READY_TO_CLEAR` handling for live human-in-the-loop interaction
+- Added keyboard `y/n` response flow so one ASK event can transition to acceptance or rejection states
+- Added runtime state exclusion so cups accepted for cleanup are removed from repeated global-policy asking
+- Added single-arm ASK arbitration so only one cup is asked at a time even when multiple cups are eligible
+- Added `ask_priority`, `ask_reason`, candidate rank, and selected-for-ask logging for explainable ASK selection
+- Added `NEEDS_LIQUID_CHECK` handoff so global webcam inference stops at candidate selection and local verification remains a downstream step
+- Added `drink_count`, `estimated_consumed_ml`, `estimated_drink_progress`, and `last_drink_event_time` as heuristic social-use features
+- Added release hysteresis, debounce, and cooldown to stabilize noisy `release_count` spikes from hand-distance flicker
+- Added face-proximity gating so sip-like events are counted only when a held cup approaches the user face before release
+- Changed ASK eligibility for used cups so single pick-and-place interactions remain in `OBSERVE` and repeated sip-like milestones trigger ASK
+- Added ASK milestones at `drink_count` values `5`, `8`, and `10`
+- Added overlay support for priority, ask reason, cooldown, readiness for local liquid check, handled cups, and face-aware drink estimates
+- Added temporary local-liquid-check mock response handling in live `state_machine` mode so `y/n` can be used to simulate EMPTY vs NON_EMPTY after `NEEDS_LIQUID_CHECK`
+- Added overlay/log output for liquid-check mock results so abandoned-cup testing can display whether the cup would be cleared or restored
+
+### Test
+
+- `python -m py_compile main_demo.py policy/state_machine.py tracking/interaction_tracker.py`
+- `python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode state_machine`
+- `python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode state_machine --log-live-eval logs/live_policy_eval_state_machine_priority.csv`
+- In abandoned-cup validation, waited for `NEEDS_LIQUID_CHECK` and used:
+- `y` to simulate `EMPTY -> clear`
+- `n` to simulate `NON_EMPTY -> restore`
+- Checked state-machine logs for:
+- `OBSERVE -> ASK -> ASK_PENDING`
+- `reuse_detected`
+- `ask_priority`
+- `selected_for_ask`
+- `verification_required`
+- `exclude_from_policy`
+
+### Result
+
+- The live policy now behaves more like a service robot interaction manager than a framewise classifier
+- ASK is generated as a single event and then transitions to `ASK_PENDING` instead of repeating every frame
+- Reuse detection works as a cancellation path from `OBSERVE`, `ASK_PENDING`, and cooldown states back to `WAIT`
+- Global webcam policy now distinguishes between:
+- cups that should be left alone
+- cups that can be asked about
+- cups that should move to local liquid verification
+- Cups that already received a user `yes` response are excluded from repeated ASK arbitration and remain only in the downstream cleanup path
+- The current design clearly separates:
+- global webcam = social timing and cleanup candidacy
+- local or gripper camera = EMPTY/NON_EMPTY verification before physical cleanup
+- The abandoned-cup path can now be checked interactively in the live window before real robot/controller integration by using `y/n` at `NEEDS_LIQUID_CHECK`
+
+### Issue
+
+- `hand_distance` still falls back to `999.0` when the hand is not visible, which can make distance-based ASK priority less informative in some frames
+- The drink-count heuristic is still an estimate and depends on face visibility plus camera geometry
+- Because `OBSERVE`, `ASK_PENDING`, `READY_TO_CLEAR`, and `NEEDS_LIQUID_CHECK` are runtime state-machine states, they are not yet learned directly by the BC model
+- Local liquid verification in the live path is still a mock keyboard-driven branch, not a real robot/gripper camera callback
+
+### Next
+
+- Refine person-distance estimation so ASK priority is less dependent on hand visibility alone
+- Consider adding face-distance or owner-distance features more directly into priority selection
+- If needed, collect new social-interaction datasets for `OBSERVE`, reuse, and repeated sip-like usage patterns so a later model can learn more of the social timing directly
+
 ## Template
 
 Copy this section for future work days.

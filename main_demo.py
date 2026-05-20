@@ -514,6 +514,7 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
         selected_for_ask = bool(prediction.get("selected_for_ask", False))
         ask_candidate_rank = int(prediction.get("ask_candidate_rank", 0))
         liquid_check_status = prediction.get("liquid_check_status", "none")
+        liquid_check_result = prediction.get("liquid_check_result", "none")
         selected_for_liquid_check = bool(prediction.get("selected_for_liquid_check", False))
         exclude_from_policy = bool(prediction.get("exclude_from_policy", False))
         handled_reason = prediction.get("handled_reason", "none")
@@ -621,6 +622,10 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
             cv2.putText(output, "Global webcam candidate only | approach for local liquid check", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.72, draw_color, 2)
         elif action == "READY_TO_CLEAR":
             cv2.putText(output, "Ready for local liquid verification", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
+        if liquid_check_result == "EMPTY":
+            cv2.putText(output, "Local liquid check: empty -> 컵 치운다", (10, output.shape[0] - 52), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 255, 0), 2)
+        elif liquid_check_result == "NON_EMPTY":
+            cv2.putText(output, "Local liquid check: non-empty -> 컵 안치운다", (10, output.shape[0] - 52), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 200, 255), 2)
     return output
 
 
@@ -670,6 +675,7 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
         "verification_required",
         "selected_for_liquid_check",
         "liquid_check_status",
+        "liquid_check_result",
         "exclude_from_policy",
         "handled_reason",
     ]
@@ -727,6 +733,7 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
                     "verification_required": int(bool(prediction.get("verification_required", False))),
                     "selected_for_liquid_check": int(bool(prediction.get("selected_for_liquid_check", False))),
                     "liquid_check_status": prediction.get("liquid_check_status", "none"),
+                    "liquid_check_result": prediction.get("liquid_check_result", "none"),
                     "exclude_from_policy": int(bool(prediction.get("exclude_from_policy", False))),
                     "handled_reason": prediction.get("handled_reason", "none"),
                 }
@@ -904,12 +911,21 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
             key = cv2.waitKey(1) & 0xFF
             if args.policy_mode in {"arbitration", "state_machine"}:
                 pending_cup_id = runtime_state_machine.get_pending_cup_id()
-                if key == ord("y") and pending_cup_id is not None:
-                    runtime_state_machine.apply_user_response(pending_cup_id, "yes", current_time)
-                    continue
-                if key == ord("n") and pending_cup_id is not None:
-                    runtime_state_machine.apply_user_response(pending_cup_id, "no", current_time)
-                    continue
+                liquid_check_cup_id = runtime_state_machine.get_selected_liquid_check_cup_id()
+                if key == ord("y"):
+                    if pending_cup_id is not None:
+                        runtime_state_machine.apply_user_response(pending_cup_id, "yes", current_time)
+                        continue
+                    if liquid_check_cup_id is not None:
+                        runtime_state_machine.apply_liquid_check_response(liquid_check_cup_id, "yes", current_time)
+                        continue
+                if key == ord("n"):
+                    if pending_cup_id is not None:
+                        runtime_state_machine.apply_user_response(pending_cup_id, "no", current_time)
+                        continue
+                    if liquid_check_cup_id is not None:
+                        runtime_state_machine.apply_liquid_check_response(liquid_check_cup_id, "no", current_time)
+                        continue
             if key in (ord("q"), 27):
                 break
     finally:
