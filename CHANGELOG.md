@@ -7,6 +7,33 @@
 - Connect mock cleanup skills to Doosan M0609 robot interfaces
 - Expand evaluation summaries and ablation records
 
+## v0.6-social-state-machine
+
+### Added
+- Runtime `OBSERVE` state for post-release waiting before asking
+- Reuse detection so `OBSERVE`, `ASK_PENDING`, or cooldown can be cancelled when the user grabs the cup again
+- Soft transition state machine for `arbitration` and `state_machine` live modes
+- `ASK_PENDING` to avoid repeated prompts every frame
+- `ASK_COOLDOWN` for rejection and timeout handling
+- `READY_TO_CLEAR` for accepted cleanup requests
+- Single-arm ASK priority arbitration so only one cup is asked at a time
+- `ask_reason`, ASK rank, and priority logging for explainable social prompting
+- Heuristic `drink_count` and estimated drink progress from hand-cup trajectory
+- ASK milestones at drink counts `5`, `8`, and `10`
+- Face-proximity drink gating so sip-like events are counted when the cup is actually brought near the user
+- `NEEDS_LIQUID_CHECK` handoff so cleanup candidates go to local verification instead of direct clear
+- Post-accept exclusion so cups confirmed for cleanup are removed from further global-policy ASK arbitration
+- Keyboard `y/n` response handling in live state-machine evaluation
+
+### Changed
+- Tightened sip-like event gating so single pick-and-place interactions stay in `OBSERVE` and do not immediately trigger ASK
+- Added release debounce and hysteresis to reduce noisy release spikes
+- Kept `model_only` as pure Behavior Cloning inspection and `safety_guard` as minimal safety correction
+
+### Notes
+- The global webcam only selects cleanup candidates and ASK targets
+- The local or gripper camera remains the final EMPTY/NON_EMPTY verification step before physical cleanup
+
 ## v0.5-live-policy-inference
 
 ### Added
@@ -14,21 +41,6 @@
 - `IDLE` suppression for untouched cups in multi-cup scenes
 - Live overlay for `ACTIVE`, `USED`, confidence, and tracker timing fields
 - Trajectory-aware tracker outputs such as `time_near_cup`, `time_since_release`, `release_count`, and `stationary_time`
-- Runtime `OBSERVE` state for post-release waiting before asking
-- Reuse detection to cancel `OBSERVE` or `ASK` when the user reuses a cup
-- Soft transition state machine for `arbitration` and `state_machine` live modes
-- `ASK_PENDING` to avoid repeated prompts every frame
-- Single-arm ASK priority arbitration so only one cup is asked at a time
-- `ask_reason`, ASK rank, and priority logging for explainable social prompting
-- Heuristic `drink_count` and estimated drink progress from hand-cup trajectory
-- Stricter sip-like event gating so single pick-and-place interactions stay in `OBSERVE` and do not immediately trigger ASK
-- ASK milestones at drink counts `5`, `8`, and `10`, plus release debounce and hysteresis to reduce noisy release spikes
-- Face-proximity drink gating so sip-like events are counted when the cup is actually brought near the user
-- `NEEDS_LIQUID_CHECK` handoff so cleanup candidates go to local verification instead of direct clear
-- Post-accept exclusion so cups confirmed for cleanup are removed from further global-policy ASK arbitration
-- `ASK_COOLDOWN` for rejection and timeout handling
-- `READY_TO_CLEAR` for accepted cleanup requests
-- Keyboard `y/n` response handling in live state-machine evaluation
 
 ### Changed
 - Updated expert-rule labeling to support `IDLE` in trajectory-aware data collection

@@ -522,6 +522,7 @@ Current trajectory-aware validation metrics:
 - The live overlay and CSV logs now expose `ask_priority`, `ask_reason`, candidate rank, and whether a cup was selected for the current ASK turn.
 - Consumption is estimated heuristically from hand-cup trajectory plus face proximity only. The default assumption is a `390mL` cup and an `estimated_sip_ml` of `22mL`, both configurable in `configs/config.yaml`.
 - A single pick-and-place is no longer enough to trigger ASK by itself. Used cups first enter `OBSERVE`, and ASK is promoted only after repeated sip-like interaction events reach the configured drink-count milestones, currently `5`, `8`, and `10`.
+- The `drink_count` heuristic now prefers sip-like patterns: active hold, meaningful cup motion, face-near approach, and then release. This is an estimated social-use signal, not a direct liquid measurement.
 - The global webcam policy only decides whether a cup is a cleanup candidate. It does not directly clear the cup.
 - Cleanup candidates are now handed off as `NEEDS_LIQUID_CHECK`, meaning the next required step is local or gripper-camera verification before `READY_TO_CLEAR` or `SPILL_SAFE_CLEAR`.
 - Cups that already received a user `yes` response are excluded from repeated global-policy asking and remain only in the downstream `READY_TO_CLEAR` or liquid-check flow.
