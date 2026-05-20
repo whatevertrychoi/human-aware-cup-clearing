@@ -18,6 +18,13 @@
 - Reuse detection to cancel `OBSERVE` or `ASK` when the user reuses a cup
 - Soft transition state machine for `arbitration` and `state_machine` live modes
 - `ASK_PENDING` to avoid repeated prompts every frame
+- Single-arm ASK priority arbitration so only one cup is asked at a time
+- `ask_reason`, ASK rank, and priority logging for explainable social prompting
+- Heuristic `drink_count` and estimated drink progress from hand-cup trajectory
+- Stricter sip-like event gating so single pick-and-place interactions stay in `OBSERVE` and do not immediately trigger ASK
+- ASK milestones at drink counts `5`, `8`, and `10`, plus release debounce and hysteresis to reduce noisy release spikes
+- Face-proximity drink gating so sip-like events are counted when the cup is actually brought near the user
+- `NEEDS_LIQUID_CHECK` handoff so cleanup candidates go to local verification instead of direct clear
 - `ASK_COOLDOWN` for rejection and timeout handling
 - `READY_TO_CLEAR` for accepted cleanup requests
 - Keyboard `y/n` response handling in live state-machine evaluation

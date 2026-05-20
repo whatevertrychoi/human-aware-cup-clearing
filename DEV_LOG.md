@@ -377,6 +377,21 @@
 - Added `READY_TO_CLEAR` so accepted cups can be cleanly handed off to the later local-liquid-verification stage
 - Added `y/n` keyboard response handling in live state-machine evaluation
 
+### ASK Priority And Liquid Handoff Update
+
+- Added single-arm ASK priority arbitration so only one cup can become `ASK` or `ASK_PENDING` at a time
+- Added `ask_reason`, `ask_priority`, candidate rank, and selection logging for explainable ASK behavior
+- Added heuristic `drink_count`, `estimated_consumed_ml`, and `estimated_drink_progress` from hand-cup trajectory
+- Tightened the heuristic so a single pick-and-place does not immediately count as a drink or trigger ASK
+- ASK after use now requires repeated sip-like events, with the current default milestones set to `drink_count` `5`, `8`, and `10`
+- Added release hysteresis, debounce, and cooldown so `release_count` is less sensitive to hand-distance flicker
+- Added face-proximity gating so sip-like events are counted only when the cup is brought near the user's face before release
+- Kept `model_only` untouched as pure Behavior Cloning inspection while applying the new arbitration only in `state_machine` and `arbitration`
+- Changed live cleanup flow so global webcam inference ends at `NEEDS_LIQUID_CHECK` rather than clearing directly
+- Recorded the design split explicitly:
+- global webcam = cleanup candidate selection
+- local or gripper camera = EMPTY/NON_EMPTY verification before `READY_TO_CLEAR` or `SPILL_SAFE_CLEAR`
+
 ## Template
 
 Copy this section for future work days.

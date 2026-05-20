@@ -24,12 +24,15 @@ cup_detection:
 
 tracking:
   touch_threshold: 0.12
+  touch_release_threshold: 0.16
   default_last_touched_time: 999.0
   user_absence_threshold: 10.0
   time_near_threshold: 0.8
   motion_distance_threshold: 0.03
   stationary_motion_threshold: 0.01
   touch_count_used_threshold: 1
+  release_debounce_seconds: 0.35
+  release_cooldown_seconds: 1.0
 
 policy:
   confidence_threshold: 0.65
@@ -40,6 +43,14 @@ policy:
   ask_cooldown_seconds: 30.0
   ask_repeat_limit: 1
   ask_pending_timeout: 20.0
+  cup_capacity_ml: 390.0
+  estimated_sip_ml: 22.0
+  ask_drink_count_milestones: [5, 8, 10]
+  drink_progress_ask_threshold: 0.65
+  drink_time_threshold_strict: 2.0
+  drink_motion_threshold_strict: 0.08
+  drink_event_cooldown: 3.0
+  face_drink_distance_threshold: 0.22
   post_active_idle_ask_threshold: 20.0
   untouched_idle_ask_threshold: 60.0
   cleanup_time_threshold: 30.0

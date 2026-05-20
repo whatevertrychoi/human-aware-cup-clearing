@@ -135,7 +135,10 @@ def get_live_policy_thresholds(config: dict) -> dict:
     )
     return {
         "touch_threshold": float(tracking_cfg.get("touch_threshold", 0.12)),
+        "touch_release_threshold": float(tracking_cfg.get("touch_release_threshold", 0.16)),
         "user_absence_threshold": float(tracking_cfg.get("user_absence_threshold", 10.0)),
+        "time_near_threshold": float(tracking_cfg.get("time_near_threshold", 0.8)),
+        "touch_count_used_threshold": int(tracking_cfg.get("touch_count_used_threshold", 1)),
         "recent_touch_threshold": float(policy_cfg.get("recent_touch_threshold", 10.0)),
         "ask_delay_after_release": ask_delay_after_release,
         "never_active_ask_delay": never_active_ask_delay,
@@ -148,6 +151,8 @@ def get_live_policy_thresholds(config: dict) -> dict:
         "cleanup_time_threshold": float(policy_cfg.get("cleanup_time_threshold", 30.0)),
         "stationary_threshold": float(policy_cfg.get("stationary_threshold", 3.0)),
         "confidence_threshold": float(policy_cfg.get("confidence_threshold", 0.65)),
+        "ask_drink_count_milestones": list(policy_cfg.get("ask_drink_count_milestones", [5, 8, 10])),
+        "drink_progress_ask_threshold": float(policy_cfg.get("drink_progress_ask_threshold", 0.65)),
     }
 
 
@@ -172,7 +177,7 @@ def collect_live_perception(frame, config: dict, hands_ctx, face_ctx, interactio
     user_state["face_center"] = user_presence.get("face_center")
     user_state["confidence"] = user_presence.get("confidence", 0.0)
     user_state["source"] = user_presence.get("source", "none")
-    tracked_cups = interaction_tracker.update(cups, hand, dt)
+    tracked_cups = interaction_tracker.update(cups, hand, dt, face_center=user_state.get("face_center"))
     return tracked_cups, hand, user_state
 
 
@@ -444,15 +449,15 @@ def apply_live_state_machine(
     timestamp_now: float,
 ) -> list[dict]:
     prediction_map = {int(item["cup_id"]): item for item in predictions}
-    results: list[dict] = []
+    frame_results: list[dict] = []
     for cup in cups:
         cup_id = int(cup["cup_id"])
         prediction = prediction_map.get(
             cup_id,
             {"cup_id": cup_id, "action": "IDLE", "raw_action": "IDLE", "confidence": 0.0, "probabilities": {}},
         )
-        results.append(runtime_machine.update_cup_state(cup, prediction, user_state, hand, timestamp_now))
-    return results
+        frame_results.append(runtime_machine.update_cup_state(cup, prediction, user_state, hand, timestamp_now))
+    return runtime_machine.finalize_frame(cups, frame_results, timestamp_now)
 
 
 def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: dict, predictions: list[dict], policy_mode: str) -> np.ndarray:
@@ -464,8 +469,11 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
         "ASK_PENDING": (0, 140, 255),
         "ASK_COOLDOWN": (120, 120, 200),
         "CLEANUP_CANDIDATE": (0, 0, 255),
+        "NEEDS_LIQUID_CHECK": (80, 80, 255),
         "READY_TO_CLEAR": (0, 255, 0),
+        "SPILL_SAFE_CLEAR": (70, 70, 180),
         "OBSERVE": (0, 220, 220),
+        "WAITING_QUEUE": (180, 180, 80),
         "IDLE": (180, 180, 180),
     }
 
@@ -500,6 +508,12 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
         override_reason = prediction.get("reason", "none")
         ask_count = int(prediction.get("ask_count", 0))
         cooldown_remaining = float(prediction.get("cooldown_remaining", 0.0))
+        ask_priority = float(prediction.get("ask_priority", 0.0))
+        ask_reason = prediction.get("ask_reason", "none")
+        selected_for_ask = bool(prediction.get("selected_for_ask", False))
+        ask_candidate_rank = int(prediction.get("ask_candidate_rank", 0))
+        liquid_check_status = prediction.get("liquid_check_status", "none")
+        selected_for_liquid_check = bool(prediction.get("selected_for_liquid_check", False))
         x1, y1, x2, y2 = cup["bbox"]
         cx, cy = cup["center_pixel"]
         draw_color = action_colors.get(action, (255, 255, 255))
@@ -511,7 +525,10 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
         cv2.putText(output, f"conf={confidence:.2f} reason={override_reason}", (x1, max(62, y1 - 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, draw_color, 2)
         cv2.putText(
             output,
-            f"d={cup.get('hand_distance', 999.0):.2f} touch={cup.get('touch_count', 0)} last={cup.get('last_touched_time', 0.0):.1f}s ask_count={ask_count}",
+            (
+                f"d={cup.get('hand_distance', 999.0):.2f} touch={cup.get('touch_count', 0)} "
+                f"last={cup.get('last_touched_time', 0.0):.1f}s ask_count={ask_count}"
+            ),
             (x1, max(82, y1 + 18)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.48,
@@ -521,35 +538,67 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
         cv2.putText(
             output,
             (
-                f"near={cup.get('time_near_cup', 0.0):.1f}s "
-                f"release={cup.get('release_count', 0)} "
-                f"stat={cup.get('stationary_time', 0.0):.1f}s "
-                f"used={cup.get('used_cup_candidate', 0)}"
+                f"drink={cup.get('drink_count', 0)} est={cup.get('estimated_consumed_ml', 0.0):.0f}ml/390ml "
+                f"prog={cup.get('estimated_drink_progress', 0.0) * 100.0:.0f}% face={cup.get('min_face_distance', 999.0):.2f}"
             ),
-            (x1, min(output.shape[0] - 42, y2 + 18)),
+            (x1, max(102, y1 + 38)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.42,
             draw_color,
+            2,
+        )
+        cv2.putText(
+            output,
+            (
+                f"near={cup.get('time_near_cup', 0.0):.1f}s release={cup.get('release_count', 0)} "
+                f"stat={cup.get('stationary_time', 0.0):.1f}s used={cup.get('used_cup_candidate', 0)}"
+            ),
+            (x1, min(output.shape[0] - 58, y2 + 18)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.40,
+            draw_color,
             1,
         )
+        cv2.putText(
+            output,
+            (
+                f"priority={ask_priority:.2f} ask_reason={ask_reason} "
+                f"rank={ask_candidate_rank} selected={int(selected_for_ask)}"
+            ),
+            (x1, min(output.shape[0] - 40, y2 + 36)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.40,
+            draw_color,
+            1,
+        )
+
         if cup.get("is_active_cup", 0):
-            cv2.putText(output, "ACTIVE", (x1, min(output.shape[0] - 20, y2 + 38)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 2)
+            cv2.putText(output, "ACTIVE", (x1, min(output.shape[0] - 20, y2 + 54)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 2)
         if cup.get("used_cup_candidate", 0):
             cv2.putText(output, "USED", (x2 - 58, max(20, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, draw_color, 2)
+
+        status_y = min(output.shape[0] - 8, y2 + 72)
         if action != raw_action:
-            cv2.putText(output, f"override={override_reason}", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
-        elif action == "CLEANUP_CANDIDATE":
-            cv2.putText(output, "cleanup candidate", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, draw_color, 2)
+            cv2.putText(output, f"override={override_reason}", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
+        elif state == "WAITING_QUEUE":
+            cv2.putText(output, "waiting queue", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
         elif action == "OBSERVE":
-            cv2.putText(output, "observing... waiting before asking", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
-        elif action == "ASK_PENDING":
-            cv2.putText(output, "ASK_PENDING", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, draw_color, 2)
+            cv2.putText(output, "observing... waiting before asking", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
         elif state == "ASK_COOLDOWN":
-            cv2.putText(output, f"cooldown={cooldown_remaining:.1f}s", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
+            cv2.putText(output, f"cooldown={cooldown_remaining:.1f}s", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
+        elif action == "ASK_PENDING":
+            cv2.putText(output, "ASK_PENDING", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, draw_color, 2)
+        elif action == "NEEDS_LIQUID_CHECK":
+            cv2.putText(output, f"verification required ({liquid_check_status})", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
         elif action == "READY_TO_CLEAR":
-            cv2.putText(output, "Ready to check cup", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
+            cv2.putText(output, "Ready to check cup", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
+        elif action == "SPILL_SAFE_CLEAR":
+            cv2.putText(output, "spill-safe clear", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
         elif action == "IDLE":
-            cv2.putText(output, "IDLE", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, draw_color, 2)
+            cv2.putText(output, "IDLE", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, draw_color, 2)
+
+        if selected_for_liquid_check:
+            cv2.putText(output, "selected for liquid check", (x1, min(output.shape[0] - 8, y2 + 90)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
 
         if prediction.get("reuse_event", False):
             cv2.putText(output, "ASK cancelled: user reused cup", (10, output.shape[0] - 52), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 255, 255), 2)
@@ -561,6 +610,8 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
             cv2.putText(output, "Waiting for user response...", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
         elif state == "ASK_COOLDOWN":
             cv2.putText(output, "Ask cooldown active", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
+        elif action == "NEEDS_LIQUID_CHECK":
+            cv2.putText(output, "Global webcam candidate only | approach for local liquid check", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.72, draw_color, 2)
         elif action == "READY_TO_CLEAR":
             cv2.putText(output, "Ready for local liquid verification", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
     return output
@@ -599,6 +650,19 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
         "cooldown_remaining",
         "user_response",
         "ready_to_clear",
+        "ask_priority",
+        "ask_reason",
+        "selected_for_ask",
+        "ask_candidate_rank",
+        "drink_count",
+        "estimated_consumed_ml",
+        "estimated_drink_progress",
+        "last_drink_event_time",
+        "min_face_distance",
+        "face_approach_detected",
+        "verification_required",
+        "selected_for_liquid_check",
+        "liquid_check_status",
     ]
     prediction_map = {int(item["cup_id"]): item for item in predictions}
     file_exists = log_path.exists()
@@ -641,19 +705,42 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
                     "cooldown_remaining": round(float(prediction.get("cooldown_remaining", 0.0)), 4),
                     "user_response": prediction.get("user_response", "none"),
                     "ready_to_clear": int(bool(prediction.get("ready_to_clear", False))),
+                    "ask_priority": round(float(prediction.get("ask_priority", 0.0)), 4),
+                    "ask_reason": prediction.get("ask_reason", "none"),
+                    "selected_for_ask": int(bool(prediction.get("selected_for_ask", False))),
+                    "ask_candidate_rank": int(prediction.get("ask_candidate_rank", 0)),
+                    "drink_count": int(cup.get("drink_count", 0)),
+                    "estimated_consumed_ml": round(float(cup.get("estimated_consumed_ml", 0.0)), 4),
+                    "estimated_drink_progress": round(float(cup.get("estimated_drink_progress", 0.0)), 4),
+                    "last_drink_event_time": round(float(cup.get("last_drink_event_time", 999.0)), 4),
+                    "min_face_distance": round(float(cup.get("min_face_distance", 999.0)), 4),
+                    "face_approach_detected": int(cup.get("face_approach_detected", 0)),
+                    "verification_required": int(bool(prediction.get("verification_required", False))),
+                    "selected_for_liquid_check": int(bool(prediction.get("selected_for_liquid_check", False))),
+                    "liquid_check_status": prediction.get("liquid_check_status", "none"),
                 }
             )
 
 
 def build_interaction_tracker(config: dict) -> InteractionTracker:
     tracking_cfg = get_required(config, ["tracking"])
+    policy_cfg = config.get("policy", {}) if isinstance(config, dict) else {}
     return InteractionTracker(
         touch_threshold=float(tracking_cfg.get("touch_threshold", 0.12)),
+        touch_release_threshold=float(tracking_cfg.get("touch_release_threshold", 0.16)),
         default_last_touched_time=float(tracking_cfg.get("default_last_touched_time", 999.0)),
         time_near_threshold=float(tracking_cfg.get("time_near_threshold", 0.8)),
         motion_distance_threshold=float(tracking_cfg.get("motion_distance_threshold", 0.03)),
         stationary_motion_threshold=float(tracking_cfg.get("stationary_motion_threshold", 0.01)),
         touch_count_used_threshold=int(tracking_cfg.get("touch_count_used_threshold", 1)),
+        release_debounce_seconds=float(tracking_cfg.get("release_debounce_seconds", 0.35)),
+        release_cooldown_seconds=float(tracking_cfg.get("release_cooldown_seconds", 1.0)),
+        cup_capacity_ml=float(policy_cfg.get("cup_capacity_ml", 390.0)),
+        estimated_sip_ml=float(policy_cfg.get("estimated_sip_ml", 22.0)),
+        drink_time_threshold_strict=float(policy_cfg.get("drink_time_threshold_strict", 2.0)),
+        drink_motion_threshold_strict=float(policy_cfg.get("drink_motion_threshold_strict", 0.08)),
+        drink_event_cooldown=float(policy_cfg.get("drink_event_cooldown", 3.0)),
+        face_drink_distance_threshold=float(policy_cfg.get("face_drink_distance_threshold", 0.22)),
     )
 
 
@@ -776,6 +863,12 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
                     "was_moved": int(cup.get("was_moved", 0)),
                     "used_cup_candidate": int(cup.get("used_cup_candidate", 0)),
                     "idle_candidate": int(cup.get("idle_candidate", 0)),
+                    "drink_count": int(cup.get("drink_count", 0)),
+                    "estimated_consumed_ml": float(cup.get("estimated_consumed_ml", 0.0)),
+                    "estimated_drink_progress": float(cup.get("estimated_drink_progress", 0.0)),
+                    "last_drink_event_time": float(cup.get("last_drink_event_time", 999.0)),
+                    "min_face_distance": float(cup.get("min_face_distance", 999.0)),
+                    "face_approach_detected": int(cup.get("face_approach_detected", 0)),
                 }
                 for cup in tracked_cups
             ]
