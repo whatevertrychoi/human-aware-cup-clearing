@@ -20,6 +20,13 @@
   - `NEEDS_LIQUID_CHECK`
 - Keyboard `y/n` response handling in live state-machine evaluation
 - Keyboard `y/n` mock liquid-check response handling for `NEEDS_LIQUID_CHECK` abandoned-cup testing
+- ROS2 trigger bridge support for final live state-machine outputs
+- One-shot trigger publishing for:
+  - `ASK_TRIGGER`
+  - `CANCEL_ASK_TRIGGER`
+  - `ROBOT_LIQUID_CHECK_TRIGGER`
+- Refined `CANCEL_ASK_TRIGGER` so it is emitted only for cups that actually published a prior `ASK_TRIGGER`
+- Added `CANCEL_ROBOT_LIQUID_CHECK_TRIGGER` so robot-side local inspection can be aborted when a previously selected abandoned-cup target leaves the active liquid-check set before completion
 - Single-arm ASK priority arbitration so only one cup is asked at a time
 - `ask_reason`, ASK rank, and priority logging for explainable social prompting
 - Heuristic `drink_count`, `estimated_consumed_ml`, and `estimated_drink_progress`
@@ -35,6 +42,8 @@
   - local or gripper camera = final EMPTY/NON_EMPTY verification before physical cleanup
 - Kept `model_only` as pure Behavior Cloning inspection and `safety_guard` as minimal safety correction
 - Added live overlay/log feedback for mock local-liquid-check results so abandoned-cup validation can show clear vs restore decisions before robot integration
+- Added configurable bridge-side cup-id remapping for ROS2 / robot YOLO integration without rewriting the internal cup IDs used by the policy
+- Added bridge-side active-session tracking for ASK and liquid-check triggers so transport events better match one-shot policy intent
 
 ## v0.5-trajectory-aware-policy
 

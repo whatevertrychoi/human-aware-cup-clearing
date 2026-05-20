@@ -412,15 +412,37 @@
 - Added overlay support for priority, ask reason, cooldown, readiness for local liquid check, handled cups, and face-aware drink estimates
 - Added temporary local-liquid-check mock response handling in live `state_machine` mode so `y/n` can be used to simulate EMPTY vs NON_EMPTY after `NEEDS_LIQUID_CHECK`
 - Added overlay/log output for liquid-check mock results so abandoned-cup testing can display whether the cup would be cleared or restored
+- Added a ROS2 trigger bridge path for live `state_machine` / `arbitration` execution
+- Added one-shot publish logic for:
+  - `ASK_TRIGGER`
+  - `CANCEL_ASK_TRIGGER`
+  - `ROBOT_LIQUID_CHECK_TRIGGER`
+- Added a bridge-side cup-id mapping layer so policy-side cup IDs can be translated to the robot YOLO label order without changing the internal policy logic
+- Refined `CANCEL_ASK_TRIGGER` semantics so it is no longer emitted for every generic reuse event
+- Tightened cancel publishing so `CANCEL_ASK_TRIGGER` is emitted only when:
+  - the same cup previously emitted a real `ASK_TRIGGER`
+  - that ASK session is still considered active on the bridge side
+  - a later reuse event invalidates that active ask session
+- Added `CANCEL_ROBOT_LIQUID_CHECK_TRIGGER` so the robot side can be told to stop a pending local liquid-check approach if:
+  - a cup was previously selected for `ROBOT_LIQUID_CHECK_TRIGGER`
+  - but later drops out of the active `NEEDS_LIQUID_CHECK` selection set
+  - and the drop was not caused by a completed mock liquid-check result such as `EMPTY` or `NON_EMPTY`
+- Kept the bridge as a transport-layer adapter rather than moving ROS2 publish logic into the policy state machine itself
 
 ### Test
 
 - `python -m py_compile main_demo.py policy/state_machine.py tracking/interaction_tracker.py`
+- `python -m py_compile main_demo.py integration/ros2_trigger_bridge.py`
 - `python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode state_machine`
 - `python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode state_machine --log-live-eval logs/live_policy_eval_state_machine_priority.csv`
 - In abandoned-cup validation, waited for `NEEDS_LIQUID_CHECK` and used:
 - `y` to simulate `EMPTY -> clear`
 - `n` to simulate `NON_EMPTY -> restore`
+- Verified trigger semantics on the ROS2 bridge side conceptually:
+  - `ASK_TRIGGER` is only published on the one-shot ASK frame
+  - `CANCEL_ASK_TRIGGER` is only published if that cup already published `ASK_TRIGGER`
+  - `ROBOT_LIQUID_CHECK_TRIGGER` is only published once per active liquid-check selection interval
+  - `CANCEL_ROBOT_LIQUID_CHECK_TRIGGER` is emitted if a previously selected liquid-check cup leaves the active set before completion
 - Checked state-machine logs for:
 - `OBSERVE -> ASK -> ASK_PENDING`
 - `reuse_detected`
@@ -443,6 +465,13 @@
 - global webcam = social timing and cleanup candidacy
 - local or gripper camera = EMPTY/NON_EMPTY verification before physical cleanup
 - The abandoned-cup path can now be checked interactively in the live window before real robot/controller integration by using `y/n` at `NEEDS_LIQUID_CHECK`
+- The live policy can now publish ROS2-friendly trigger events from the final state-machine outputs without modifying the underlying BC model or tracker logic
+- Trigger semantics are now more consistent with downstream robot execution:
+  - `ASK_TRIGGER` means "start ask flow for this cup"
+  - `CANCEL_ASK_TRIGGER` means "abort a previously started ask flow for this same cup"
+  - `ROBOT_LIQUID_CHECK_TRIGGER` means "start local inspection for this abandoned-cup target"
+  - `CANCEL_ROBOT_LIQUID_CHECK_TRIGGER` means "abort that pending local inspection because the policy no longer wants it"
+- The bridge now tracks active ASK sessions and active liquid-check sessions explicitly so transport-level triggers better match the real intent of the state-machine outputs
 
 ### Issue
 
@@ -450,12 +479,16 @@
 - The drink-count heuristic is still an estimate and depends on face visibility plus camera geometry
 - Because `OBSERVE`, `ASK_PENDING`, `READY_TO_CLEAR`, and `NEEDS_LIQUID_CHECK` are runtime state-machine states, they are not yet learned directly by the BC model
 - Local liquid verification in the live path is still a mock keyboard-driven branch, not a real robot/gripper camera callback
+- Full ROS2 runtime validation still needs to be performed on the Ubuntu robot laptop with `rclpy` and the actual subscriber nodes
+- `CANCEL_ROBOT_LIQUID_CHECK_TRIGGER` is currently inferred at the bridge layer from liquid-check set membership changes rather than from a dedicated explicit state-machine cancellation state
+- The current bridge relies on in-process memory of active ASK/liquid-check sessions, so process restarts clear that transient trigger history
 
 ### Next
 
 - Refine person-distance estimation so ASK priority is less dependent on hand visibility alone
 - Consider adding face-distance or owner-distance features more directly into priority selection
 - If needed, collect new social-interaction datasets for `OBSERVE`, reuse, and repeated sip-like usage patterns so a later model can learn more of the social timing directly
+- If robot-side integration requires stronger formal guarantees, consider adding explicit policy-level cancellation states for abandoned-cup local-check withdrawal instead of only bridge-level trigger inference
 
 ## Template
 

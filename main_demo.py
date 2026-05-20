@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from integration.ros2_trigger_bridge import ROS2TriggerBridge
 from perception.detect_cups import detect_cups
 from perception.detect_hand import detect_hand, has_mediapipe_solutions
 from perception.detect_liquid_local import detect_liquid_local, make_mock_liquid_frame
@@ -837,6 +838,7 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
     interaction_tracker = build_interaction_tracker(config)
     user_presence_tracker = UserPresenceTracker(absence_threshold=float(tracking_cfg.get("user_absence_threshold", 10.0)))
     runtime_state_machine = SoftTransitionStateMachine(get_live_policy_thresholds(config))
+    trigger_bridge = ROS2TriggerBridge.from_config(config, active=args.policy_mode in {"arbitration", "state_machine"})
     previous_time = time.time()
 
     try:
@@ -903,6 +905,9 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
                     else []
                 )
 
+            if predictions and args.policy_mode in {"arbitration", "state_machine"}:
+                trigger_bridge.process_predictions(predictions, current_time)
+
             if log_path is not None and predictions:
                 write_live_eval_rows(log_path, tracked_cups, predictions, user_state, args.policy_mode, current_time)
 
@@ -929,6 +934,7 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
             if key in (ord("q"), 27):
                 break
     finally:
+        trigger_bridge.close()
         if hands_ctx is not None:
             hands_ctx.close()
         if face_ctx is not None:

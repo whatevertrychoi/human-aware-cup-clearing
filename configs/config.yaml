@@ -109,3 +109,12 @@ robot:
     x: 0.50
     y: 0.20
     z: 0.10
+
+ros2_trigger:
+  enabled: false
+  topic: "/cup_cleanup/trigger"
+  node_name: "cup_cleanup_trigger_bridge"
+  cup_id_to_robot_label:
+    0: 1
+    1: 2
+    2: 0
