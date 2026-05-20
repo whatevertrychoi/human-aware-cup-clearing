@@ -474,6 +474,7 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
         "SPILL_SAFE_CLEAR": (70, 70, 180),
         "OBSERVE": (0, 220, 220),
         "WAITING_QUEUE": (180, 180, 80),
+        "HANDLED": (120, 220, 120),
         "IDLE": (180, 180, 180),
     }
 
@@ -514,6 +515,8 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
         ask_candidate_rank = int(prediction.get("ask_candidate_rank", 0))
         liquid_check_status = prediction.get("liquid_check_status", "none")
         selected_for_liquid_check = bool(prediction.get("selected_for_liquid_check", False))
+        exclude_from_policy = bool(prediction.get("exclude_from_policy", False))
+        handled_reason = prediction.get("handled_reason", "none")
         x1, y1, x2, y2 = cup["bbox"]
         cx, cy = cup["center_pixel"]
         draw_color = action_colors.get(action, (255, 255, 255))
@@ -576,6 +579,8 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
             cv2.putText(output, "ACTIVE", (x1, min(output.shape[0] - 20, y2 + 54)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 2)
         if cup.get("used_cup_candidate", 0):
             cv2.putText(output, "USED", (x2 - 58, max(20, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, draw_color, 2)
+        if exclude_from_policy:
+            cv2.putText(output, f"HANDLED {handled_reason}", (x1, min(output.shape[0] - 24, y2 + 108)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
 
         status_y = min(output.shape[0] - 8, y2 + 72)
         if action != raw_action:
@@ -592,6 +597,8 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
             cv2.putText(output, f"verification required ({liquid_check_status})", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
         elif action == "READY_TO_CLEAR":
             cv2.putText(output, "Ready to check cup", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
+        elif state == "HANDLED":
+            cv2.putText(output, "excluded from policy", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
         elif action == "SPILL_SAFE_CLEAR":
             cv2.putText(output, "spill-safe clear", (x1, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
         elif action == "IDLE":
@@ -663,6 +670,8 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
         "verification_required",
         "selected_for_liquid_check",
         "liquid_check_status",
+        "exclude_from_policy",
+        "handled_reason",
     ]
     prediction_map = {int(item["cup_id"]): item for item in predictions}
     file_exists = log_path.exists()
@@ -718,6 +727,8 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
                     "verification_required": int(bool(prediction.get("verification_required", False))),
                     "selected_for_liquid_check": int(bool(prediction.get("selected_for_liquid_check", False))),
                     "liquid_check_status": prediction.get("liquid_check_status", "none"),
+                    "exclude_from_policy": int(bool(prediction.get("exclude_from_policy", False))),
+                    "handled_reason": prediction.get("handled_reason", "none"),
                 }
             )
 

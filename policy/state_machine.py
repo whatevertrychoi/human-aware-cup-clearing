@@ -17,6 +17,8 @@ class CupRuntimeState:
     user_response: str | None = None
     ready_to_clear: bool = False
     asked_drink_milestones: set[int] = field(default_factory=set)
+    exclude_from_policy: bool = False
+    handled_reason: str | None = None
 
 
 @dataclass
@@ -127,6 +129,8 @@ class SoftTransitionStateMachine:
             runtime_state.ready_to_clear = True
             runtime_state.user_response = "yes"
             runtime_state.cooldown_until = None
+            runtime_state.exclude_from_policy = True
+            runtime_state.handled_reason = "accepted_for_cleanup"
             runtime_state.previous_state = runtime_state.state
             runtime_state.state = "READY_TO_CLEAR"
         elif response == "no":
@@ -134,6 +138,8 @@ class SoftTransitionStateMachine:
             runtime_state.ready_to_clear = False
             runtime_state.user_response = "no"
             runtime_state.cooldown_until = timestamp_now + float(self.thresholds.get("ask_cooldown_seconds", 30.0))
+            runtime_state.exclude_from_policy = False
+            runtime_state.handled_reason = "user_rejected_cleanup"
             runtime_state.previous_state = runtime_state.state
             runtime_state.state = "ASK_COOLDOWN"
 
@@ -203,6 +209,63 @@ class SoftTransitionStateMachine:
         selected_for_liquid_check = False
         liquid_check_status = "none"
 
+        if runtime_state.exclude_from_policy:
+            if runtime_state.ready_to_clear:
+                state = "READY_TO_CLEAR"
+                final_action = "READY_TO_CLEAR"
+                override_reason = "excluded_after_accept"
+            else:
+                state = "HANDLED"
+                final_action = "IDLE"
+                override_reason = "excluded_from_policy"
+            runtime_state.previous_state = previous_state
+            runtime_state.state = state
+            last_reuse_time = (
+                999.0
+                if runtime_state.last_reuse_at is None
+                else max(0.0, float(timestamp_now) - float(runtime_state.last_reuse_at))
+            )
+            last_asked_time = (
+                999.0
+                if runtime_state.last_asked_at is None
+                else max(0.0, float(timestamp_now) - float(runtime_state.last_asked_at))
+            )
+            cooldown_remaining = (
+                0.0
+                if runtime_state.cooldown_until is None
+                else max(0.0, float(runtime_state.cooldown_until) - float(timestamp_now))
+            )
+            merged = dict(prediction)
+            merged["state"] = state
+            merged["previous_state"] = previous_state
+            merged["action"] = final_action
+            merged["raw_action"] = raw_action
+            merged["confidence"] = confidence
+            merged["reason"] = override_reason
+            merged["used_cup_candidate"] = used_cup_candidate
+            merged["is_active_cup"] = is_active_cup
+            merged["reuse_event"] = False
+            merged["reuse_count"] = int(runtime_state.reuse_count)
+            merged["last_reuse_time"] = float(last_reuse_time)
+            merged["ask_cancelled_by_reuse"] = bool(runtime_state.ask_cancelled_by_reuse)
+            merged["ask_count"] = int(runtime_state.ask_count)
+            merged["ask_pending"] = bool(runtime_state.ask_pending)
+            merged["last_asked_time"] = float(last_asked_time)
+            merged["cooldown_remaining"] = float(cooldown_remaining)
+            merged["user_response"] = runtime_state.user_response or "none"
+            merged["ready_to_clear"] = bool(runtime_state.ready_to_clear)
+            merged["ask_candidate"] = False
+            merged["ask_priority"] = 0.0
+            merged["ask_reason"] = "none"
+            merged["selected_for_ask"] = False
+            merged["ask_candidate_rank"] = 0
+            merged["verification_required"] = bool(runtime_state.ready_to_clear)
+            merged["selected_for_liquid_check"] = bool(runtime_state.ready_to_clear)
+            merged["liquid_check_status"] = "pending" if runtime_state.ready_to_clear else "none"
+            merged["exclude_from_policy"] = True
+            merged["handled_reason"] = runtime_state.handled_reason or "accepted_for_cleanup"
+            return merged
+
         runtime_state.ask_cancelled_by_reuse = False
         if active_and_near and previous_state in {
             "OBSERVE",
@@ -221,6 +284,8 @@ class SoftTransitionStateMachine:
             runtime_state.cooldown_until = None
             runtime_state.user_response = None
             runtime_state.ready_to_clear = False
+            runtime_state.exclude_from_policy = False
+            runtime_state.handled_reason = None
 
         cooldown_active = runtime_state.cooldown_until is not None and timestamp_now < runtime_state.cooldown_until
         if runtime_state.cooldown_until is not None and not cooldown_active:
@@ -357,6 +422,8 @@ class SoftTransitionStateMachine:
         merged["verification_required"] = bool(verification_required)
         merged["selected_for_liquid_check"] = bool(selected_for_liquid_check)
         merged["liquid_check_status"] = liquid_check_status
+        merged["exclude_from_policy"] = bool(runtime_state.exclude_from_policy)
+        merged["handled_reason"] = runtime_state.handled_reason or "none"
         return merged
 
     def finalize_frame(
@@ -373,6 +440,8 @@ class SoftTransitionStateMachine:
         for item in results:
             cup_id = int(item["cup_id"])
             cup = cup_map[cup_id]
+            if item.get("exclude_from_policy", False):
+                continue
             if not item.get("ask_candidate", False):
                 continue
             runtime_state = self._get_runtime_state(cup_id)

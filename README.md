@@ -524,3 +524,4 @@ Current trajectory-aware validation metrics:
 - A single pick-and-place is no longer enough to trigger ASK by itself. Used cups first enter `OBSERVE`, and ASK is promoted only after repeated sip-like interaction events reach the configured drink-count milestones, currently `5`, `8`, and `10`.
 - The global webcam policy only decides whether a cup is a cleanup candidate. It does not directly clear the cup.
 - Cleanup candidates are now handed off as `NEEDS_LIQUID_CHECK`, meaning the next required step is local or gripper-camera verification before `READY_TO_CLEAR` or `SPILL_SAFE_CLEAR`.
+- Cups that already received a user `yes` response are excluded from repeated global-policy asking and remain only in the downstream `READY_TO_CLEAR` or liquid-check flow.

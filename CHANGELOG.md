@@ -25,6 +25,7 @@
 - ASK milestones at drink counts `5`, `8`, and `10`, plus release debounce and hysteresis to reduce noisy release spikes
 - Face-proximity drink gating so sip-like events are counted when the cup is actually brought near the user
 - `NEEDS_LIQUID_CHECK` handoff so cleanup candidates go to local verification instead of direct clear
+- Post-accept exclusion so cups confirmed for cleanup are removed from further global-policy ASK arbitration
 - `ASK_COOLDOWN` for rejection and timeout handling
 - `READY_TO_CLEAR` for accepted cleanup requests
 - Keyboard `y/n` response handling in live state-machine evaluation

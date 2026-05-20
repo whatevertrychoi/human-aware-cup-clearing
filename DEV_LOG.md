@@ -386,6 +386,7 @@
 - ASK after use now requires repeated sip-like events, with the current default milestones set to `drink_count` `5`, `8`, and `10`
 - Added release hysteresis, debounce, and cooldown so `release_count` is less sensitive to hand-distance flicker
 - Added face-proximity gating so sip-like events are counted only when the cup is brought near the user's face before release
+- Added post-accept exclusion so cups that already received `yes` are removed from repeated ASK arbitration and stay only in the downstream cleanup flow
 - Kept `model_only` untouched as pure Behavior Cloning inspection while applying the new arbitration only in `state_machine` and `arbitration`
 - Changed live cleanup flow so global webcam inference ends at `NEEDS_LIQUID_CHECK` rather than clearing directly
 - Recorded the design split explicitly:
