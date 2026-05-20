@@ -36,6 +36,10 @@ policy:
   recent_touch_threshold: 10.0
   ask_delay_after_release: 20.0
   never_active_ask_delay: 60.0
+  observe_min_duration: 3.0
+  ask_cooldown_seconds: 30.0
+  ask_repeat_limit: 1
+  ask_pending_timeout: 20.0
   post_active_idle_ask_threshold: 20.0
   untouched_idle_ask_threshold: 60.0
   cleanup_time_threshold: 30.0

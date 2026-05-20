@@ -14,6 +14,7 @@ from perception.detect_hand import detect_hand, has_mediapipe_solutions
 from perception.detect_liquid_local import detect_liquid_local, make_mock_liquid_frame
 from perception.detect_user_presence import detect_user_presence
 from policy.infer_policy import load_model_bundle, predict_actions
+from policy.state_machine import SoftTransitionStateMachine
 from project_utils import ConfigError, ensure_parent, get_required, load_config
 from robot import mock_robot
 from tracking.interaction_tracker import InteractionTracker
@@ -89,8 +90,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--policy-mode",
         default="safety_guard",
-        choices=["model_only", "safety_guard", "arbitration"],
-        help="Choose model-only, lightweight safety-guard, or full arbitration live policy mode",
+        choices=["model_only", "safety_guard", "arbitration", "state_machine"],
+        help="Choose model-only, lightweight safety-guard, or state-machine-based arbitration live policy mode",
     )
     parser.add_argument("--log-live-eval", default=None, help="Optional CSV path for live policy evaluation logging")
     return parser.parse_args()
@@ -138,6 +139,10 @@ def get_live_policy_thresholds(config: dict) -> dict:
         "recent_touch_threshold": float(policy_cfg.get("recent_touch_threshold", 10.0)),
         "ask_delay_after_release": ask_delay_after_release,
         "never_active_ask_delay": never_active_ask_delay,
+        "observe_min_duration": float(policy_cfg.get("observe_min_duration", 3.0)),
+        "ask_cooldown_seconds": float(policy_cfg.get("ask_cooldown_seconds", 30.0)),
+        "ask_repeat_limit": int(policy_cfg.get("ask_repeat_limit", 1)),
+        "ask_pending_timeout": float(policy_cfg.get("ask_pending_timeout", 20.0)),
         "post_active_idle_ask_threshold": ask_delay_after_release,
         "untouched_idle_ask_threshold": never_active_ask_delay,
         "cleanup_time_threshold": float(policy_cfg.get("cleanup_time_threshold", 30.0)),
@@ -415,11 +420,38 @@ def apply_model_only(cups: list[dict], predictions: list[dict]) -> list[dict]:
         merged = dict(prediction)
         merged["action"] = str(prediction.get("action", "IDLE"))
         merged["raw_action"] = str(prediction.get("raw_action", merged["action"]))
+        merged["state"] = merged["action"]
+        merged["previous_state"] = merged["action"]
         merged["reason"] = "model_only"
         merged["used_cup_candidate"] = bool(cup.get("used_cup_candidate", 0))
         merged["is_active_cup"] = bool(cup.get("is_active_cup", 0))
+        merged["reuse_event"] = False
+        merged["reuse_count"] = 0
+        merged["last_reuse_time"] = 999.0
+        merged["ask_cancelled_by_reuse"] = False
         merged["uncertainty_override"] = bool(prediction.get("uncertainty_override", False))
         results.append(merged)
+    return results
+
+
+def apply_live_state_machine(
+    cups: list[dict],
+    predictions: list[dict],
+    user_state: dict,
+    hand: dict,
+    config: dict,
+    runtime_machine: SoftTransitionStateMachine,
+    timestamp_now: float,
+) -> list[dict]:
+    prediction_map = {int(item["cup_id"]): item for item in predictions}
+    results: list[dict] = []
+    for cup in cups:
+        cup_id = int(cup["cup_id"])
+        prediction = prediction_map.get(
+            cup_id,
+            {"cup_id": cup_id, "action": "IDLE", "raw_action": "IDLE", "confidence": 0.0, "probabilities": {}},
+        )
+        results.append(runtime_machine.update_cup_state(cup, prediction, user_state, hand, timestamp_now))
     return results
 
 
@@ -429,7 +461,11 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
     action_colors = {
         "WAIT": (0, 215, 255),
         "ASK": (0, 165, 255),
+        "ASK_PENDING": (0, 140, 255),
+        "ASK_COOLDOWN": (120, 120, 200),
         "CLEANUP_CANDIDATE": (0, 0, 255),
+        "READY_TO_CLEAR": (0, 255, 0),
+        "OBSERVE": (0, 220, 220),
         "IDLE": (180, 180, 180),
     }
 
@@ -457,9 +493,13 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
     for cup in cups:
         prediction = prediction_map.get(int(cup["cup_id"]), {})
         action = prediction.get("action", "UNKNOWN")
+        state = prediction.get("state", action)
+        previous_state = prediction.get("previous_state", state)
         confidence = prediction.get("confidence", 0.0)
         raw_action = prediction.get("raw_action", action)
         override_reason = prediction.get("reason", "none")
+        ask_count = int(prediction.get("ask_count", 0))
+        cooldown_remaining = float(prediction.get("cooldown_remaining", 0.0))
         x1, y1, x2, y2 = cup["bbox"]
         cx, cy = cup["center_pixel"]
         draw_color = action_colors.get(action, (255, 255, 255))
@@ -467,11 +507,12 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
         cv2.rectangle(output, (x1, y1), (x2, y2), draw_color, 3)
         cv2.circle(output, (cx, cy), 5, draw_color, -1)
         cv2.putText(output, f"Cup {cup['cup_id']} raw={raw_action} final={action}", (x1, max(22, y1 - 44)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, draw_color, 2)
-        cv2.putText(output, f"conf={confidence:.2f} reason={override_reason}", (x1, max(42, y1 - 22)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, draw_color, 2)
+        cv2.putText(output, f"state={state} prev={previous_state}", (x1, max(42, y1 - 22)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, draw_color, 2)
+        cv2.putText(output, f"conf={confidence:.2f} reason={override_reason}", (x1, max(62, y1 - 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, draw_color, 2)
         cv2.putText(
             output,
-            f"d={cup.get('hand_distance', 999.0):.2f} touch={cup.get('touch_count', 0)} last={cup.get('last_touched_time', 0.0):.1f}s",
-            (x1, max(62, y1 - 2)),
+            f"d={cup.get('hand_distance', 999.0):.2f} touch={cup.get('touch_count', 0)} last={cup.get('last_touched_time', 0.0):.1f}s ask_count={ask_count}",
+            (x1, max(82, y1 + 18)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.48,
             draw_color,
@@ -499,12 +540,29 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
             cv2.putText(output, f"override={override_reason}", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
         elif action == "CLEANUP_CANDIDATE":
             cv2.putText(output, "cleanup candidate", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, draw_color, 2)
+        elif action == "OBSERVE":
+            cv2.putText(output, "observing... waiting before asking", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
+        elif action == "ASK_PENDING":
+            cv2.putText(output, "ASK_PENDING", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, draw_color, 2)
+        elif state == "ASK_COOLDOWN":
+            cv2.putText(output, f"cooldown={cooldown_remaining:.1f}s", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
+        elif action == "READY_TO_CLEAR":
+            cv2.putText(output, "Ready to check cup", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, draw_color, 1)
         elif action == "IDLE":
             cv2.putText(output, "IDLE", (x1, min(output.shape[0] - 8, y2 + 56)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, draw_color, 2)
 
+        if prediction.get("reuse_event", False):
+            cv2.putText(output, "ASK cancelled: user reused cup", (10, output.shape[0] - 52), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 255, 255), 2)
+
         if action == "ASK" and not ask_message_drawn:
-            cv2.putText(output, "Will you clear this cup?", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
+            cv2.putText(output, "이 잔 치워드릴까요? (y/n)", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
             ask_message_drawn = True
+        elif state == "ASK_PENDING":
+            cv2.putText(output, "Waiting for user response...", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
+        elif state == "ASK_COOLDOWN":
+            cv2.putText(output, "Ask cooldown active", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
+        elif action == "READY_TO_CLEAR":
+            cv2.putText(output, "Ready for local liquid verification", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
     return output
 
 
@@ -512,6 +570,8 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
     fieldnames = [
         "timestamp",
         "cup_id",
+        "state",
+        "previous_state",
         "raw_action",
         "final_action",
         "confidence",
@@ -529,6 +589,16 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
         "stationary_time",
         "used_cup_candidate",
         "idle_duration",
+        "reuse_event",
+        "reuse_count",
+        "last_reuse_time",
+        "ask_cancelled_by_reuse",
+        "ask_count",
+        "ask_pending",
+        "last_asked_time",
+        "cooldown_remaining",
+        "user_response",
+        "ready_to_clear",
     ]
     prediction_map = {int(item["cup_id"]): item for item in predictions}
     file_exists = log_path.exists()
@@ -542,6 +612,8 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
                 {
                     "timestamp": round(timestamp_now, 3),
                     "cup_id": int(cup["cup_id"]),
+                    "state": prediction.get("state", prediction.get("action", "IDLE")),
+                    "previous_state": prediction.get("previous_state", prediction.get("state", prediction.get("action", "IDLE"))),
                     "raw_action": prediction.get("raw_action", prediction.get("action", "IDLE")),
                     "final_action": prediction.get("action", "IDLE"),
                     "confidence": round(float(prediction.get("confidence", 0.0)), 4),
@@ -559,6 +631,16 @@ def write_live_eval_rows(log_path: Path, tracked_cups: list[dict], predictions: 
                     "stationary_time": round(float(cup.get("stationary_time", 0.0)), 4),
                     "used_cup_candidate": int(cup.get("used_cup_candidate", 0)),
                     "idle_duration": round(compute_idle_duration(cup), 4),
+                    "reuse_event": int(bool(prediction.get("reuse_event", False))),
+                    "reuse_count": int(prediction.get("reuse_count", 0)),
+                    "last_reuse_time": round(float(prediction.get("last_reuse_time", 999.0)), 4),
+                    "ask_cancelled_by_reuse": int(bool(prediction.get("ask_cancelled_by_reuse", False))),
+                    "ask_count": int(prediction.get("ask_count", 0)),
+                    "ask_pending": int(bool(prediction.get("ask_pending", False))),
+                    "last_asked_time": round(float(prediction.get("last_asked_time", 999.0)), 4),
+                    "cooldown_remaining": round(float(prediction.get("cooldown_remaining", 0.0)), 4),
+                    "user_response": prediction.get("user_response", "none"),
+                    "ready_to_clear": int(bool(prediction.get("ready_to_clear", False))),
                 }
             )
 
@@ -649,6 +731,7 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
     hands_ctx, face_ctx = create_mediapipe_contexts()
     interaction_tracker = build_interaction_tracker(config)
     user_presence_tracker = UserPresenceTracker(absence_threshold=float(tracking_cfg.get("user_absence_threshold", 10.0)))
+    runtime_state_machine = SoftTransitionStateMachine(get_live_policy_thresholds(config))
     previous_time = time.time()
 
     try:
@@ -703,14 +786,27 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
             elif args.policy_mode == "safety_guard":
                 predictions = apply_live_safety_guard(tracked_cups, raw_predictions, user_state, hand, config) if raw_predictions else []
             else:
-                predictions = apply_live_arbitration(tracked_cups, raw_predictions, user_state, hand, config) if raw_predictions else []
+                predictions = (
+                    apply_live_state_machine(tracked_cups, raw_predictions, user_state, hand, config, runtime_state_machine, current_time)
+                    if raw_predictions
+                    else []
+                )
 
             if log_path is not None and predictions:
                 write_live_eval_rows(log_path, tracked_cups, predictions, user_state, args.policy_mode, current_time)
 
             overlay = draw_live_policy_overlay(frame, tracked_cups, hand, user_state, predictions, args.policy_mode)
             cv2.imshow("Live Policy Inference", overlay)
-            if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+            key = cv2.waitKey(1) & 0xFF
+            if args.policy_mode in {"arbitration", "state_machine"}:
+                pending_cup_id = runtime_state_machine.get_pending_cup_id()
+                if key == ord("y") and pending_cup_id is not None:
+                    runtime_state_machine.apply_user_response(pending_cup_id, "yes", current_time)
+                    continue
+                if key == ord("n") and pending_cup_id is not None:
+                    runtime_state_machine.apply_user_response(pending_cup_id, "no", current_time)
+                    continue
+            if key in (ord("q"), 27):
                 break
     finally:
         if hands_ctx is not None:

@@ -236,13 +236,24 @@ Live policy evaluation modes:
 python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode model_only
 python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode safety_guard
 python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode arbitration
+python main_demo.py --camera-index 1 --backend dshow --live-policy --model results/decision_model_trajectory.joblib --policy-mode state_machine
 ```
 
 Mode interpretation:
 
 - `model_only`: validates the Behavior Cloning policy itself without safety overrides
 - `safety_guard`: keeps the model prediction first and only blocks clearly unsafe or unnecessary actions
-- `arbitration`: applies stronger rule-based stabilization for demo presentation
+- `arbitration`: applies the soft social state machine for demo presentation
+- `state_machine`: explicit alias for the same soft transition runtime controller used by `arbitration`
+
+Additional social behavior extensions now supported at runtime:
+
+- `OBSERVE`: after a used cup is released, the system waits in an observing state before asking
+- reuse detection: if the user grabs a cup again during `OBSERVE` or `ASK`, the prompt is cancelled and the cup returns to `WAIT`
+- soft transition control: `WAIT -> OBSERVE -> ASK` is handled in a runtime state machine without changing `model_only`
+- `ASK_PENDING`: after one ASK event, the system waits for a user response instead of repeating the prompt every frame
+- `ASK_COOLDOWN`: after a rejection or timeout, the same cup is not asked again immediately
+- `READY_TO_CLEAR`: a user-accepted cup is marked ready for local liquid verification
 
 Optional live evaluation logging:
 
@@ -262,6 +273,12 @@ In this mode the overlay shows:
 - `stationary_time`
 - `used_cup_candidate`
 - `ACTIVE` and `USED` markers
+
+Keyboard response handling in `state_machine` and `arbitration`:
+
+- `y`: accept the current pending ASK and move the cup to `READY_TO_CLEAR`
+- `n`: reject the current pending ASK and move the cup to `ASK_COOLDOWN`
+- `q` or `ESC`: quit
 
 ## Cup Dataset Capture
 

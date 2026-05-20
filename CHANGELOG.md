@@ -14,6 +14,13 @@
 - `IDLE` suppression for untouched cups in multi-cup scenes
 - Live overlay for `ACTIVE`, `USED`, confidence, and tracker timing fields
 - Trajectory-aware tracker outputs such as `time_near_cup`, `time_since_release`, `release_count`, and `stationary_time`
+- Runtime `OBSERVE` state for post-release waiting before asking
+- Reuse detection to cancel `OBSERVE` or `ASK` when the user reuses a cup
+- Soft transition state machine for `arbitration` and `state_machine` live modes
+- `ASK_PENDING` to avoid repeated prompts every frame
+- `ASK_COOLDOWN` for rejection and timeout handling
+- `READY_TO_CLEAR` for accepted cleanup requests
+- Keyboard `y/n` response handling in live state-machine evaluation
 
 ### Changed
 - Updated expert-rule labeling to support `IDLE` in trajectory-aware data collection

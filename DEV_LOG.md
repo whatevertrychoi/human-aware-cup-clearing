@@ -365,6 +365,18 @@
 - `safety_guard` for model-first deployment behavior
 - `arbitration` for rule-heavier demo stabilization
 
+### Social State Runtime Update
+
+- Added a runtime `OBSERVE` state for post-release waiting before asking
+- Added reuse detection so `OBSERVE` or `ASK` can be cancelled when the user grabs the cup again
+- Added a soft transition state machine in the live arbitration path
+- Preserved `model_only` as the pure BC inspection mode
+- Deferred multi-user ownership tracking until dedicated data collection and validation are ready
+- Added `ASK_PENDING` so the same cup is not asked repeatedly every frame
+- Added `ASK_COOLDOWN` so a rejected or timed-out cup is not immediately re-asked
+- Added `READY_TO_CLEAR` so accepted cups can be cleanly handed off to the later local-liquid-verification stage
+- Added `y/n` keyboard response handling in live state-machine evaluation
+
 ## Template
 
 Copy this section for future work days.
