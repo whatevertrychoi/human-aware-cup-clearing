@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed
+- Added a short ASK re-arm delay in `integration/ros2_trigger_bridge.py` so a newly pending ASK is not published in the same frame immediately after the previous ASK session is cancelled or cleared.
+- Changed ASK session clearing so leaving the ASK state no longer emits an immediate generic `CANCEL_ASK_TRIGGER`; instead the bridge now holds the active ASK session for a grace window before silently releasing it, while explicit reuse cancel still cancels immediately.
+- Changed ASK session ownership again so the bridge now prefers robot feedback on `/cup_cleanup/robot_feedback` to clear an active ASK session; policy-side ASK disappearance only acts as a long watchdog fallback instead of immediately ending the robot-owned ASK run.
+- Changed live-policy overlay behavior so an active robot-owned ASK session keeps the corresponding cup in `ASK` state on the policy display while the robot is still executing, instead of letting transient runtime state transitions switch the overlay back to `OBSERVE/IDLE/WAIT`.
+- Removed keyboard `y/n` response handling from the live policy loop in preparation for voice-driven confirmation, while keeping the state-machine response APIs available for the upcoming voice input integration.
+
+### Added
+- Cleanup-session interpretation for `ROBOT_LIQUID_CHECK_TRIGGER` on the ROS2 bridge side.
+- Short cleanup-cancel grace handling so brief liquid-check candidate flicker does not immediately cancel an active robot cleanup session.
+
+### Changed
+- Clarified the current integration meaning of ROS2 trigger transport:
+  - `ASK_TRIGGER` still starts a social ask flow
+  - `ROBOT_LIQUID_CHECK_TRIGGER` is now aligned with downstream robot cleanup-session start behavior
+- Updated bridge-side liquid-check publishing so one active cleanup session is started from the current liquid-check candidate set instead of repeatedly treating the event as a per-cup local-inspection request.
+- Updated bridge-side ASK handling so the active ASK cup emits `CANCEL_ASK_TRIGGER` not only for reuse cancellation but also when it leaves the ASK set, including transitions back to `WAIT`.
+- Treated `ASK_PENDING` and `READY_TO_CLEAR` as ASK-session-active states so the bridge no longer cancels immediately right after `ASK_TRIGGER`.
+
 ### Planned
 - Add real local liquid verification using the gripper camera
 - Connect cleanup actions to Doosan M0609 robot interfaces

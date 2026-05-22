@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Main demo runner for perception, policy, and ROS2 trigger integration.
+
+This file is the integration hub of the `cup_cleanup` project. It ties together
+perception, interaction tracking, policy inference, runtime state transitions,
+overlay rendering, CSV logging, and optional ROS2 trigger publishing.
+"""
+
 import argparse
 import csv
 import sys
@@ -158,6 +165,7 @@ def get_live_policy_thresholds(config: dict) -> dict:
 
 
 def collect_live_perception(frame, config: dict, hands_ctx, face_ctx, interaction_tracker, user_presence_tracker, dt: float):
+    """Collect cup, hand, and user signals and attach tracker-derived features."""
     tray_position = get_required(config, ["robot", "tray_position"])
     cups = detect_cups(frame, config)
     for cup in cups:
@@ -172,6 +180,8 @@ def collect_live_perception(frame, config: dict, hands_ctx, face_ctx, interactio
             ((cup["x_norm"] - float(tray_position["x"])) ** 2 + (cup["y_norm"] - float(tray_position["y"])) ** 2) ** 0.5
         )
 
+    # Hand and user presence are computed separately so fallback behavior still
+    # works when one signal is temporarily unreliable.
     hand = detect_hand(frame, hands=hands_ctx)
     user_presence = detect_user_presence(frame, face_detector=face_ctx, hand_detection=hand)
     user_state = user_presence_tracker.update(bool(user_presence["user_present"]), dt)
@@ -449,6 +459,7 @@ def apply_live_state_machine(
     runtime_machine: SoftTransitionStateMachine,
     timestamp_now: float,
 ) -> list[dict]:
+    """Apply the runtime state machine to live frame predictions."""
     prediction_map = {int(item["cup_id"]): item for item in predictions}
     frame_results: list[dict] = []
     for cup in cups:
@@ -613,10 +624,10 @@ def draw_live_policy_overlay(frame, cups: list[dict], hand: dict, user_state: di
             cv2.putText(output, "ASK cancelled: user reused cup", (10, output.shape[0] - 52), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 255, 255), 2)
 
         if action == "ASK" and not ask_message_drawn:
-            cv2.putText(output, "이 잔 치워드릴까요? (y/n)", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
+            cv2.putText(output, "ASK active | awaiting voice confirmation", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.78, draw_color, 2)
             ask_message_drawn = True
         elif state == "ASK_PENDING":
-            cv2.putText(output, "Waiting for user response...", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
+            cv2.putText(output, "Waiting for voice response...", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
         elif state == "ASK_COOLDOWN":
             cv2.putText(output, "Ask cooldown active", (10, output.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, draw_color, 3)
         elif action == "NEEDS_LIQUID_CHECK":
@@ -817,6 +828,7 @@ def run_perception_debug(args: argparse.Namespace, config: dict) -> int:
 
 
 def run_live_policy(args: argparse.Namespace, config: dict) -> int:
+    """Run the real-time policy loop and optionally publish ROS2 triggers."""
     if not args.model:
         print("[ERROR] --model is required when using --live-policy.")
         return 1
@@ -842,6 +854,8 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
     previous_time = time.time()
 
     try:
+        # Main live loop:
+        # perception -> model -> runtime state machine -> logging/bridge.
         while True:
             ok, frame = cap.read()
             if not ok:
@@ -907,6 +921,7 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
 
             if predictions and args.policy_mode in {"arbitration", "state_machine"}:
                 trigger_bridge.process_predictions(predictions, current_time)
+                predictions = trigger_bridge.apply_action_latches(predictions)
 
             if log_path is not None and predictions:
                 write_live_eval_rows(log_path, tracked_cups, predictions, user_state, args.policy_mode, current_time)
@@ -914,23 +929,6 @@ def run_live_policy(args: argparse.Namespace, config: dict) -> int:
             overlay = draw_live_policy_overlay(frame, tracked_cups, hand, user_state, predictions, args.policy_mode)
             cv2.imshow("Live Policy Inference", overlay)
             key = cv2.waitKey(1) & 0xFF
-            if args.policy_mode in {"arbitration", "state_machine"}:
-                pending_cup_id = runtime_state_machine.get_pending_cup_id()
-                liquid_check_cup_id = runtime_state_machine.get_selected_liquid_check_cup_id()
-                if key == ord("y"):
-                    if pending_cup_id is not None:
-                        runtime_state_machine.apply_user_response(pending_cup_id, "yes", current_time)
-                        continue
-                    if liquid_check_cup_id is not None:
-                        runtime_state_machine.apply_liquid_check_response(liquid_check_cup_id, "yes", current_time)
-                        continue
-                if key == ord("n"):
-                    if pending_cup_id is not None:
-                        runtime_state_machine.apply_user_response(pending_cup_id, "no", current_time)
-                        continue
-                    if liquid_check_cup_id is not None:
-                        runtime_state_machine.apply_liquid_check_response(liquid_check_cup_id, "no", current_time)
-                        continue
             if key in (ord("q"), 27):
                 break
     finally:

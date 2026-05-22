@@ -1,5 +1,62 @@
 # DEV LOG
 
+## 2026-05-22 - Cleanup Session Alignment
+
+### Done
+
+- Reviewed the current robot-side cleanup flow after the first ROS2 trigger bridge integration.
+- Confirmed that the downstream robot stack now interprets `ROBOT_LIQUID_CHECK_TRIGGER` as a cleanup-session start signal rather than a one-cup local-inspection request.
+- Updated `integration/ros2_trigger_bridge.py` to align with that robot-side meaning.
+- Added bridge-side cleanup session tracking so:
+  - one cleanup session starts when the active liquid-check set becomes non-empty
+  - brief liquid-check set flicker does not immediately cancel the whole session
+  - completed liquid-check results such as `EMPTY` or `NON_EMPTY` do not emit unnecessary cancellation events
+- Extended ASK bridge behavior so the currently active ASK cup now emits `CANCEL_ASK_TRIGGER` when it leaves the ASK set entirely, which lets the robot return to observe pose if the policy falls back to `WAIT`.
+- Fixed an integration bug where the bridge could cancel immediately after `ASK_TRIGGER`; `ASK_PENDING` and `READY_TO_CLEAR` are now treated as still-active ASK-session states.
+- Added integration notes documenting the current handoff boundary between:
+  - `cup_cleanup`
+  - `pick_and_place_voice_cup`
+
+### Test
+
+- Static syntax validation of `integration/ros2_trigger_bridge.py`
+- End-to-end log review against the robot-side cleanup session behavior
+
+### Result
+
+- Bridge semantics are now closer to the real robot integration:
+  - policy side still selects liquid-check candidates
+  - bridge exports a cleanup-session start or stop signal
+  - robot side owns nearest-cup ranking and iterative cleanup execution
+
+### Issue
+
+- Policy-side `selected_for_liquid_check` is still conceptually a per-cup selection even though the bridge now exports a cleanup-session interpretation for robot integration.
+- Full end-to-end integration still depends on robot-side motion reliability and conservative cleanup detection quality.
+
+### Next
+
+- Continue annotating core execution files for easier integration debugging.
+- Add the next integration stage where the robot requests final user confirmation before descending to grasp.
+
+## 2026-05-22 - ASK Rearm Delay
+
+### Done
+
+- Added `ASK_REARM_DELAY_SEC = 1.5` in `integration/ros2_trigger_bridge.py`.
+- Updated pending ASK draining so a newly pending ASK is not published in the same frame immediately after the previous ASK session is cancelled or cleared.
+- Added `ASK_STATE_CLEAR_GRACE_SEC` as a long watchdog fallback so an active ASK session is no longer cancelled immediately when policy outputs briefly stop reporting ASK-related state for that cup, and later extended it to `600.0` once robot feedback became the primary ASK session terminator.
+- Added robot-feedback-driven ASK session clearing on `/cup_cleanup/robot_feedback`, so the bridge now waits for robot-side `ASK_ACTION_FINISHED` feedback before releasing the active ASK session in the normal path.
+- Extended the policy-side ASK clear grace into a long watchdog fallback so short `IDLE` or `WAIT` flicker no longer steals ASK ownership back from the robot mid-grasp.
+- Added a bridge-side prediction latch used by `main_demo.py` so the policy overlay/log stream keeps the active robot-owned cup in `ASK` while the robot has not yet reported completion, cancellation, or failure.
+- Removed the temporary keyboard `y/n` live-loop hooks from `main_demo.py` and updated overlay text so ASK / ASK_PENDING now describe voice confirmation rather than keypress confirmation.
+
+### Reason
+
+- Runtime logs showed that when one ASK session ended, the next pending ASK could be published again too quickly, which made the robot side feel like ASK events were overlapping even though they were serialized.
+- Runtime logs also showed ASK sessions disappearing on their own a few seconds after publication, so the bridge now holds the active ASK session through short state flicker and only silently releases it after a grace period unless explicit reuse cancellation occurs.
+- The latest runtime issue suggested that ASK state was still aging out from policy-side transitions before the robot finished its pick path, so ASK ownership is now tied to robot completion/cancel/failure feedback instead of transient policy state alone.
+
 ## 2026-05-18
 
 ### Done
