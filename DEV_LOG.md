@@ -1,61 +1,6 @@
 # DEV LOG
 
-## 2026-05-22 - Cleanup Session Alignment
 
-### Done
-
-- Reviewed the current robot-side cleanup flow after the first ROS2 trigger bridge integration.
-- Confirmed that the downstream robot stack now interprets `ROBOT_LIQUID_CHECK_TRIGGER` as a cleanup-session start signal rather than a one-cup local-inspection request.
-- Updated `integration/ros2_trigger_bridge.py` to align with that robot-side meaning.
-- Added bridge-side cleanup session tracking so:
-  - one cleanup session starts when the active liquid-check set becomes non-empty
-  - brief liquid-check set flicker does not immediately cancel the whole session
-  - completed liquid-check results such as `EMPTY` or `NON_EMPTY` do not emit unnecessary cancellation events
-- Extended ASK bridge behavior so the currently active ASK cup now emits `CANCEL_ASK_TRIGGER` when it leaves the ASK set entirely, which lets the robot return to observe pose if the policy falls back to `WAIT`.
-- Fixed an integration bug where the bridge could cancel immediately after `ASK_TRIGGER`; `ASK_PENDING` and `READY_TO_CLEAR` are now treated as still-active ASK-session states.
-- Added integration notes documenting the current handoff boundary between:
-  - `cup_cleanup`
-  - `pick_and_place_voice_cup`
-
-### Test
-
-- Static syntax validation of `integration/ros2_trigger_bridge.py`
-- End-to-end log review against the robot-side cleanup session behavior
-
-### Result
-
-- Bridge semantics are now closer to the real robot integration:
-  - policy side still selects liquid-check candidates
-  - bridge exports a cleanup-session start or stop signal
-  - robot side owns nearest-cup ranking and iterative cleanup execution
-
-### Issue
-
-- Policy-side `selected_for_liquid_check` is still conceptually a per-cup selection even though the bridge now exports a cleanup-session interpretation for robot integration.
-- Full end-to-end integration still depends on robot-side motion reliability and conservative cleanup detection quality.
-
-### Next
-
-- Continue annotating core execution files for easier integration debugging.
-- Add the next integration stage where the robot requests final user confirmation before descending to grasp.
-
-## 2026-05-22 - ASK Rearm Delay
-
-### Done
-
-- Added `ASK_REARM_DELAY_SEC = 1.5` in `integration/ros2_trigger_bridge.py`.
-- Updated pending ASK draining so a newly pending ASK is not published in the same frame immediately after the previous ASK session is cancelled or cleared.
-- Added `ASK_STATE_CLEAR_GRACE_SEC` as a long watchdog fallback so an active ASK session is no longer cancelled immediately when policy outputs briefly stop reporting ASK-related state for that cup, and later extended it to `600.0` once robot feedback became the primary ASK session terminator.
-- Added robot-feedback-driven ASK session clearing on `/cup_cleanup/robot_feedback`, so the bridge now waits for robot-side `ASK_ACTION_FINISHED` feedback before releasing the active ASK session in the normal path.
-- Extended the policy-side ASK clear grace into a long watchdog fallback so short `IDLE` or `WAIT` flicker no longer steals ASK ownership back from the robot mid-grasp.
-- Added a bridge-side prediction latch used by `main_demo.py` so the policy overlay/log stream keeps the active robot-owned cup in `ASK` while the robot has not yet reported completion, cancellation, or failure.
-- Removed the temporary keyboard `y/n` live-loop hooks from `main_demo.py` and updated overlay text so ASK / ASK_PENDING now describe voice confirmation rather than keypress confirmation.
-
-### Reason
-
-- Runtime logs showed that when one ASK session ended, the next pending ASK could be published again too quickly, which made the robot side feel like ASK events were overlapping even though they were serialized.
-- Runtime logs also showed ASK sessions disappearing on their own a few seconds after publication, so the bridge now holds the active ASK session through short state flicker and only silently releases it after a grace period unless explicit reuse cancellation occurs.
-- The latest runtime issue suggested that ASK state was still aging out from policy-side transitions before the robot finished its pick path, so ASK ownership is now tied to robot completion/cancel/failure feedback instead of transient policy state alone.
 
 ## 2026-05-18
 
@@ -551,22 +496,250 @@
 
 Copy this section for future work days.
 
+## 2026-05-26 - ASK Voice Handoff And Stricter Cup Detection
+
 ### Done
 
-- 
+- Split ROS2 trigger transport so social ASK events no longer share the same publish topic as robot execution events.
+- Updated `configs/config.yaml`:
+  - `ros2_trigger.ask_topic: /cup_cleanup/ask_trigger`
+  - `ros2_trigger.robot_topic: /cup_cleanup/trigger`
+- Updated `integration/ros2_trigger_bridge.py` so:
+  - `ASK_TRIGGER`, `CANCEL_ASK_TRIGGER` publish to the ask topic
+  - `ROBOT_LIQUID_CHECK_TRIGGER`, `CANCEL_ROBOT_LIQUID_CHECK_TRIGGER` stay on the robot topic
+- Verified the intended external handoff architecture:
+  - `cup_cleanup` decides ASK
+  - voice node receives ASK
+  - user `yes` causes downstream `CUP_PICK_TRIGGER`
+  - robot then performs detect -> grasp -> place
+- Reviewed the current robot-side and policy-side priority split for cleanup:
+  - policy selects liquid-check candidates by abandonment-style semantics
+  - robot executes the cleanup set by nearest observed distance
+- Tightened OpenCV global cup detection in `perception/detect_cups.py`:
+  - added stronger contour scoring inputs
+  - added `max_area`, `min_box_size`, `min_fill_ratio`, `min_solidity`, `min_circularity`
+  - added `min/max_aspect_ratio`, `max_bbox_area_ratio`, `min_score`
+  - added per-color `detector_overrides` support
+- Tightened `configs/config.yaml` cup HSV and contour thresholds globally, then relaxed green-only thresholds after green under-detection appeared in testing.
 
 ### Test
 
-- 
+- `python -m py_compile c:\Users\minseok\Desktop\cup_cleanup\perception\detect_cups.py`
+- `python -c "from project_utils import load_config; cfg=load_config(r'c:\Users\minseok\Desktop\cup_cleanup\configs\config.yaml'); print(cfg['cup_detection']['colors']['green'])"`
+- Static code review of:
+  - `integration/ros2_trigger_bridge.py`
+  - `policy/state_machine.py`
+  - downstream voice / robot coordination paths
+- Live runtime confirmation from the operator:
+  - ASK changed to voice-side trigger delivery
+  - voice response reached the robot-side trigger path
 
 ### Result
 
-- 
+- ASK is no longer sent directly to the robot-side trigger topic from `cup_cleanup`.
+- The live system now supports the intended staged flow:
+  - `ASK_TRIGGER` to voice topic
+  - voice confirmation
+  - robot execution trigger afterward
+- Global cup detection is more conservative against false positives such as clothing-colored regions and face-area color blobs.
+- Green cup detection remains available through green-specific detector overrides instead of weakening the whole detector globally.
 
 ### Issue
 
-- 
+- This repository does not contain the external voice-node source of record or the downstream robot repository, so only the `cup_cleanup` side of the transport split is versioned here.
+- Current working tree still contains older unrelated modified files, so the branch should not be committed wholesale without selecting task-relevant files.
+- The robot-side ASK completion semantics should still be rechecked end-to-end when using `CUP_PICK_TRIGGER`, since success/failure feedback ownership moved away from the old direct ASK path.
 
 ### Next
 
+- Commit only the `cup_cleanup` files that belong to this ASK-to-voice split and detector tuning.
+- Re-run live policy with `--policy-mode state_machine` when validating ASK transport, since `safety_guard` mode does not export ROS2 ASK triggers.
+- If blue clothing or face regions still leak through, add table ROI clipping before contour selection.
+
+## 2026-05-22 - Cleanup Session Alignment
+
+### Done
+
+- Reviewed the current robot-side cleanup flow after the first ROS2 trigger bridge integration.
+- Confirmed that the downstream robot stack now interprets `ROBOT_LIQUID_CHECK_TRIGGER` as a cleanup-session start signal rather than a one-cup local-inspection request.
+- Updated `integration/ros2_trigger_bridge.py` to align with that robot-side meaning.
+- Added bridge-side cleanup session tracking so:
+  - one cleanup session starts when the active liquid-check set becomes non-empty
+  - brief liquid-check set flicker does not immediately cancel the whole session
+  - completed liquid-check results such as `EMPTY` or `NON_EMPTY` do not emit unnecessary cancellation events
+- Extended ASK bridge behavior so the currently active ASK cup now emits `CANCEL_ASK_TRIGGER` when it leaves the ASK set entirely, which lets the robot return to observe pose if the policy falls back to `WAIT`.
+- Fixed an integration bug where the bridge could cancel immediately after `ASK_TRIGGER`; `ASK_PENDING` and `READY_TO_CLEAR` are now treated as still-active ASK-session states.
+- Added integration notes documenting the current handoff boundary between:
+  - `cup_cleanup`
+  - `pick_and_place_voice_cup`
+
+### Test
+
+- Static syntax validation of `integration/ros2_trigger_bridge.py`
+- End-to-end log review against the robot-side cleanup session behavior
+
+### Result
+
+- Bridge semantics are now closer to the real robot integration:
+  - policy side still selects liquid-check candidates
+  - bridge exports a cleanup-session start or stop signal
+  - robot side owns nearest-cup ranking and iterative cleanup execution
+
+### Issue
+
+- Policy-side `selected_for_liquid_check` is still conceptually a per-cup selection even though the bridge now exports a cleanup-session interpretation for robot integration.
+- Full end-to-end integration still depends on robot-side motion reliability and conservative cleanup detection quality.
+
+### Next
+
+- Continue annotating core execution files for easier integration debugging.
+- Add the next integration stage where the robot requests final user confirmation before descending to grasp.
+
+## 2026-05-22 - ASK Rearm Delay
+
+### Done
+
+- Added `ASK_REARM_DELAY_SEC = 1.5` in `integration/ros2_trigger_bridge.py`.
+- Updated pending ASK draining so a newly pending ASK is not published in the same frame immediately after the previous ASK session is cancelled or cleared.
+- Added `ASK_STATE_CLEAR_GRACE_SEC` as a long watchdog fallback so an active ASK session is no longer cancelled immediately when policy outputs briefly stop reporting ASK-related state for that cup, and later extended it to `600.0` once robot feedback became the primary ASK session terminator.
+- Added robot-feedback-driven ASK session clearing on `/cup_cleanup/robot_feedback`, so the bridge now waits for robot-side `ASK_ACTION_FINISHED` feedback before releasing the active ASK session in the normal path.
+- Extended the policy-side ASK clear grace into a long watchdog fallback so short `IDLE` or `WAIT` flicker no longer steals ASK ownership back from the robot mid-grasp.
+- Added a bridge-side prediction latch used by `main_demo.py` so the policy overlay/log stream keeps the active robot-owned cup in `ASK` while the robot has not yet reported completion, cancellation, or failure.
+- Removed the temporary keyboard `y/n` live-loop hooks from `main_demo.py` and updated overlay text so ASK / ASK_PENDING now describe voice confirmation rather than keypress confirmation.
+
+### Reason
+
+- Runtime logs showed that when one ASK session ended, the next pending ASK could be published again too quickly, which made the robot side feel like ASK events were overlapping even though they were serialized.
+- Runtime logs also showed ASK sessions disappearing on their own a few seconds after publication, so the bridge now holds the active ASK session through short state flicker and only silently releases it after a grace period unless explicit reuse cancellation occurs.
+- The latest runtime issue suggested that ASK state was still aging out from policy-side transitions before the robot finished its pick path, so ASK ownership is now tied to robot completion/cancel/failure feedback instead of transient policy state alone.
+
 - 
+
+## 2026-05-23 - ROS2 Ask/Cleanup Integration and Coordinate Debugging
+
+### Done
+
+- Added robot-feedback-driven closure for `ASK_PENDING` so the policy-side ask state no longer disappears after a fixed timeout while the robot is still executing.
+- Added `apply_robot_ask_feedback(...)` handling in `policy/state_machine.py` so robot-side `completed`, `aborted`, and `cancelled` results can update cup state directly.
+- Updated `integration/ros2_trigger_bridge.py` to:
+  - consume `ASK_ACTION_FINISHED`
+  - expose drained robot feedback to the live app
+  - include cleanup target lists in `ROBOT_LIQUID_CHECK_TRIGGER`
+  - preserve active ask / liquid-check session tracking for cancel semantics
+- Updated `main_demo.py` so drained robot feedback is applied during the live loop.
+- Set `configs/config.yaml`:
+  - `policy.ask_pending_timeout: 0.0`
+  - `ros2_trigger.enabled: true`
+- Refined robot-side scenario routing in `robot_control.py`:
+  - `ASK_TRIGGER` and `CUP_PICK_TRIGGER` use single-target flow
+  - `ROBOT_LIQUID_CHECK_TRIGGER` uses cleanup-session flow
+  - cancel / complete / abort return to `JHOME_POS`
+  - trigger start uses observe pose
+- Added cleanup-session target freezing:
+  - the bridge now sends cleanup robot cup ids
+  - the robot stores a fixed remaining-target set for the session
+  - successfully placed cleanup targets are removed from that set
+- Preserved deferred-trigger behavior so busy robot actions queue later work instead of dropping it.
+- Reworked home / observe behavior:
+  - trigger start goes to observe pose
+  - `completed`, `aborted`, and `cancelled` actions return to `JHOME_POS = [0, -30, 90, 0, 90, 0]`
+  - cleanup no-candidate and cleanup-failure exits also return home
+- Investigated a major observe-pose mismatch:
+  - configured `OBSERVE_POSX` remained `[562.779, 63.678, 593.504, 2.918, 152.473, -85.667]`
+  - measured pose after `OBSERVE_POSJ` repeatedly landed near `[670.95, 68.33, 387.94, 2.924, 152.483, -85.678]`
+  - exact observe-pose verification originally caused false aborts
+  - observe entry now proceeds even when the measured TCP does not match the configured reference
+- Explored several coordinate-correction strategies and then backed away from them when real motion did not match the corrected numbers:
+  - observe translation correction
+  - TCP command correction
+  - multi-stage refinement with repeated strict single-target detection
+- Restored the single-target coordinate pipeline toward the original proven behavior:
+  - `ASK_TRIGGER` now uses first single-target detection and direct grasp path
+  - multi-stage refinement is bypassed in the main single-target path
+  - cleanup still uses snapshot selection, then re-detects only the chosen target once before grasp
+- Simplified single-target YOLO selection in `object_detection/yolo.py`:
+  - one current frame
+  - one target label
+  - highest-confidence matching detection
+- Restored direct grasp behavior in `robot_control.py`:
+  - move directly to detected target pose
+  - close gripper
+  - lift
+  - place
+  - return home
+- Debugged depth-source handling in `object_detection/realsense.py`:
+  - aligned depth only caused the service to stall on systems where aligned depth was not consistently available
+  - restored aligned-depth preference with raw-depth fallback
+  - kept separate color and depth intrinsics
+- Fixed a service crash in `object_detection/detection.py`:
+  - `_get_depth()` signature mismatch caused `TypeError: ... takes 3 positional arguments but 4 were given`
+  - updated depth helper call path to pass frame coordinates consistently
+- Identified the biggest raw-depth coordinate bug of the day:
+  - depth was being sampled from raw-depth mapped coordinates
+  - but camera 3D conversion still used the original color-frame center pixel
+  - this caused large x/y errors even when depth values looked reasonable
+- Fixed `_get_depth_at_target(...)` and `_compute_coords_from_detection(...)` so 3D camera coordinates are now computed from the actual pixel where the depth sample was taken.
+- Preserved multi-target cleanup snapshot behavior while separating it from single-target `ASK` behavior:
+  - `ASK` stays original-style and simple
+  - cleanup keeps snapshot candidate discovery and nearest-target selection
+
+### Test
+
+- `python -m py_compile C:\Users\minseok\Desktop\cup_cleanup\main_demo.py`
+- `python -m py_compile C:\Users\minseok\Desktop\cup_cleanup\policy\state_machine.py`
+- `python -m py_compile C:\Users\minseok\Desktop\cup_cleanup\integration\ros2_trigger_bridge.py`
+- `python -m py_compile C:\Users\minseok\Downloads\pick_and_place_voice_cup\pick_and_place_voice\robot_control\robot_control.py`
+- `python -m py_compile C:\Users\minseok\Downloads\pick_and_place_voice_cup\pick_and_place_voice\object_detection\detection.py`
+- `python -m py_compile C:\Users\minseok\Downloads\pick_and_place_voice_cup\pick_and_place_voice\object_detection\yolo.py`
+- `python -m py_compile C:\Users\minseok\Downloads\pick_and_place_voice_cup\pick_and_place_voice\object_detection\realsense.py`
+- Live ROS2 runtime checks were performed through repeated `ros2 run pick_and_place_voice robot_control` and `ros2 run pick_and_place_voice object_detection` sessions while watching:
+  - `ASK_TRIGGER` dispatch
+  - cleanup dispatch
+  - observe entry
+  - detection service calls
+  - base-frame target conversion
+  - pose rejection reasons
+
+### Result
+
+- `ASK_PENDING` no longer depends on a hard 20-second timeout and can now stay active until the robot finishes or cancels the ask action.
+- ROS2 trigger publishing now works again from the live policy path when `ros2_trigger.enabled` is on.
+- `ASK`, cleanup, cancel, and home-return scenario routing are now aligned with the intended behavior:
+  - trigger start -> observe
+  - finish / abort / cancel -> home
+- Cleanup sessions now operate on a fixed target list rather than chasing every framewise change in `NEEDS_LIQUID_CHECK`.
+- The robot-side single-target path is simpler and closer to the original version that previously grasped cups successfully.
+- The object-detection service no longer crashes on the `_get_depth()` helper mismatch.
+- The object-detection service no longer stalls forever only because aligned depth is unavailable; it can now fall back to raw depth.
+- The main remaining coordinate pipeline was narrowed down to raw-depth sampling consistency:
+  - before the final fix, base-frame targets were often rejected with large x or y offsets
+  - the strongest remaining hypothesis was the mismatch between sampled depth pixel and projected camera pixel
+- The latest code state includes a direct fix for that sampled-pixel mismatch and is ready for rerun validation.
+
+### Issue
+
+- `OBSERVE_POSJ` and the configured `OBSERVE_POSX` still do not physically correspond on the real robot setup.
+- Because the measured observe pose differs strongly from the configured observe reference, there is still unresolved calibration ambiguity between:
+  - the pose assumed by hand-eye calibration
+  - the pose actually reached by the robot
+- Some runtime trials still produced rejected targets such as:
+  - green cup x slightly above workspace limit
+  - red cup x well outside workspace limit
+  - blue cup y far outside workspace limit
+- Those bad targets were observed before the final sampled-pixel fix, so a clean rerun is still required to confirm whether the last coordinate bug is fully resolved.
+- Cleanup and ask logic are now structurally aligned, but physical pick accuracy still depends on camera-to-base correctness.
+- The original refinement-based staged descent remains in the file but is intentionally bypassed for the main single-target path; it may need cleanup later to avoid confusion.
+
+### Next
+
+- Rerun `object_detection` and `robot_control` with the latest sampled-pixel fix and capture fresh logs for:
+  - `Received depth position`
+  - `Target position in base frame`
+  - first grasp command pose
+- Verify whether green / red / blue targets now land inside the workspace limits without translation hacks.
+- Recheck whether the configured `OBSERVE_POSX` should remain the detection reference or whether the real system needs recalibration instead.
+- Compare actual physical cup locations against logged base-frame target coordinates to decide whether the remaining issue is:
+  - residual raw-depth projection error
+  - hand-eye calibration error
+  - observe-pose calibration mismatch
+- If coordinate accuracy becomes stable, clean up dead refinement paths and temporary debug scaffolding from `robot_control.py` and `detection.py`.

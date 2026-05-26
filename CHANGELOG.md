@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Added
+- Separate ASK and robot ROS2 trigger topics in runtime config and bridge transport.
+- Stricter contour-based cup filtering controls:
+  - `max_area`
+  - `min_box_size`
+  - `min_fill_ratio`
+  - `min_solidity`
+  - `min_circularity`
+  - `min/max_aspect_ratio`
+  - `max_bbox_area_ratio`
+  - `min_score`
+- Per-color detector override support in `perception/detect_cups.py`.
+- Robot-feedback-driven ASK completion handling so `ASK_PENDING` can now be closed by downstream `ASK_ACTION_FINISHED` results instead of only by policy-side timeout logic.
+- Bridge support for forwarding cleanup target sets (`cleanup_source_cup_ids`, `cleanup_robot_cup_ids`) to the robot-side cleanup session.
+
+### Changed
+- Changed ASK publishing so `ASK_TRIGGER` and `CANCEL_ASK_TRIGGER` are routed to the voice-side ask topic instead of the robot execution topic.
+- Kept `ROBOT_LIQUID_CHECK_TRIGGER` and robot cleanup cancel on the robot execution topic.
+- Tightened global HSV cup detection thresholds and contour acceptance to reduce false positives from clothing and face-colored regions.
+- Relaxed green-only detector thresholds through `detector_overrides` after the stricter global detector reduced green-cup recall too much.
+- Changed live state-machine timeout behavior so `ASK_PENDING` no longer auto-expires after `20s` when `policy.ask_pending_timeout` is set to `0.0`.
+- Changed the ROS2 bridge / live app integration so robot feedback is drained each frame and applied back into the runtime state machine.
+- Changed cleanup-session semantics so one `ROBOT_LIQUID_CHECK_TRIGGER` now carries a fixed cleanup target set for the downstream robot session instead of relying only on framewise candidate churn.
+- Enabled ROS2 trigger publishing by default in the current runtime config used for live integration testing.
+
 ### Changed
 - Added a short ASK re-arm delay in `integration/ros2_trigger_bridge.py` so a newly pending ASK is not published in the same frame immediately after the previous ASK session is cancelled or cleared.
 - Changed ASK session clearing so leaving the ASK state no longer emits an immediate generic `CANCEL_ASK_TRIGGER`; instead the bridge now holds the active ASK session for a grace window before silently releasing it, while explicit reuse cancel still cancels immediately.

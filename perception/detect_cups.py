@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+"""HSV-based global cup detector used by the top-down policy pipeline.
+
+This detector is intentionally lightweight and explainable. It finds one best
+candidate per configured color and returns stable metadata such as:
+- cup ID
+- bbox
+- center pixel
+- contour area
+
+Those outputs become the shared perception backbone for tracking and policy.
+"""
+
 import argparse
 import sys
 from pathlib import Path
@@ -22,6 +34,7 @@ BACKEND_MAP = {
 
 
 def _mask_from_color(hsv_frame: np.ndarray, color_cfg: dict) -> np.ndarray:
+    """Build a binary mask for one color range, including split red ranges."""
     if "lower1" in color_cfg and "upper1" in color_cfg:
         mask1 = cv2.inRange(hsv_frame, np.array(color_cfg["lower1"]), np.array(color_cfg["upper1"]))
         mask2 = cv2.inRange(hsv_frame, np.array(color_cfg["lower2"]), np.array(color_cfg["upper2"]))
@@ -30,6 +43,7 @@ def _mask_from_color(hsv_frame: np.ndarray, color_cfg: dict) -> np.ndarray:
 
 
 def _preprocess_mask(mask: np.ndarray) -> np.ndarray:
+    """Remove small speckles and fill small holes before contour search."""
     kernel_open = np.ones((5, 5), dtype=np.uint8)
     kernel_close = np.ones((7, 7), dtype=np.uint8)
     cleaned = cv2.medianBlur(mask, 5)
@@ -38,42 +52,84 @@ def _preprocess_mask(mask: np.ndarray) -> np.ndarray:
     return cleaned
 
 
-def _score_contour(contour, min_area: float) -> tuple[float, dict] | None:
+def _score_contour(contour, cup_cfg: dict, frame_area: float) -> tuple[float, dict] | None:
+    """Score a contour and return metadata if it still looks cup-like."""
+    min_area = float(cup_cfg.get("min_area", 500))
+    max_area = float(cup_cfg.get("max_area", frame_area))
+    min_box_size = int(cup_cfg.get("min_box_size", 18))
+    min_fill_ratio = float(cup_cfg.get("min_fill_ratio", 0.22))
+    min_aspect_ratio = float(cup_cfg.get("min_aspect_ratio", 0.22))
+    max_aspect_ratio = float(cup_cfg.get("max_aspect_ratio", 4.2))
+    min_solidity = float(cup_cfg.get("min_solidity", 0.0))
+    min_circularity = float(cup_cfg.get("min_circularity", 0.0))
+    max_bbox_area_ratio = float(cup_cfg.get("max_bbox_area_ratio", 1.0))
+    min_score = float(cup_cfg.get("min_score", float("-inf")))
+
     area = float(cv2.contourArea(contour))
     if area < min_area:
+        return None
+    if area > max_area:
         return None
 
     x, y, w, h = cv2.boundingRect(contour)
     bbox_area = float(max(w * h, 1))
+    if bbox_area / float(max(frame_area, 1.0)) > max_bbox_area_ratio:
+        return None
+
     fill_ratio = area / bbox_area
     aspect_ratio = float(w) / float(max(h, 1))
     extent_penalty = abs(np.log(max(aspect_ratio, 1e-6)))
+    perimeter = float(cv2.arcLength(contour, True))
+    circularity = (
+        float((4.0 * np.pi * area) / max(perimeter * perimeter, 1e-6))
+        if perimeter > 0.0
+        else 0.0
+    )
+    hull = cv2.convexHull(contour)
+    hull_area = float(cv2.contourArea(hull))
+    solidity = area / hull_area if hull_area > 0.0 else 0.0
 
     # Cups can appear upright, lying down, or upside down, so the filter should
     # be permissive while still rejecting thin tape-like regions.
-    if w < 18 or h < 18:
+    if w < min_box_size or h < min_box_size:
         return None
-    if fill_ratio < 0.22:
+    if fill_ratio < min_fill_ratio:
         return None
-    if aspect_ratio > 4.2 or aspect_ratio < 0.22:
+    if aspect_ratio > max_aspect_ratio or aspect_ratio < min_aspect_ratio:
+        return None
+    if solidity < min_solidity:
+        return None
+    if circularity < min_circularity:
         return None
 
-    score = area - (extent_penalty * 120.0)
+    score = (
+        area
+        + (fill_ratio * 500.0)
+        + (solidity * 300.0)
+        + (circularity * 250.0)
+        - (extent_penalty * 120.0)
+    )
+    if score < min_score:
+        return None
+
     metadata = {
         "area": area,
         "bbox": [int(x), int(y), int(x + w), int(y + h)],
         "center_pixel": [int(x + w / 2), int(y + h / 2)],
         "fill_ratio": fill_ratio,
         "aspect_ratio": aspect_ratio,
+        "solidity": solidity,
+        "circularity": circularity,
     }
     return score, metadata
 
 
 def detect_cups(frame: np.ndarray, config: dict) -> list[dict]:
+    """Return one best detection per configured cup color."""
     cup_cfg = get_required(config, ["cup_detection"])
     colors = get_required(cup_cfg, ["colors"])
-    min_area = int(get_required(cup_cfg, ["min_area"]))
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    frame_area = float(frame.shape[0] * frame.shape[1])
     detections: list[dict] = []
 
     for color_name, color_cfg in colors.items():
@@ -82,9 +138,12 @@ def detect_cups(frame: np.ndarray, config: dict) -> list[dict]:
         if not contours:
             continue
 
+        contour_cfg = dict(cup_cfg)
+        contour_cfg.update(color_cfg.get("detector_overrides", {}))
+
         best_candidate = None
         for contour in contours:
-            candidate = _score_contour(contour, min_area)
+            candidate = _score_contour(contour, contour_cfg, frame_area)
             if candidate is None:
                 continue
             if best_candidate is None or candidate[0] > best_candidate[0]:

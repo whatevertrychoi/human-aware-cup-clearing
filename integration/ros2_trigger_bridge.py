@@ -12,6 +12,7 @@ Important design points:
 - repeated per-frame policy outputs are collapsed into one-shot trigger events
 - cleanup cancellation is handled as a session-level concern, not just a single
   frame-level state drop
+- ASK events may be routed to a different topic than robot motion events
 """
 
 import json
@@ -28,13 +29,25 @@ ROBOT_FEEDBACK_TOPIC = "/cup_cleanup/robot_feedback"
 
 @dataclass
 class ROS2TriggerBridge:
-    """Publish policy-side social or cleanup events onto a ROS2 topic."""
+    """Publish policy-side social or cleanup events onto a ROS2 topic.
+
+    The bridge has two jobs:
+    1. convert per-frame policy outputs into one-shot robot trigger messages
+    2. keep enough session state so the robot is not confused by frame flicker
+
+    In practice, this means ASK and cleanup events are not emitted on every
+    frame. Instead, the bridge remembers which cup currently owns the active
+    social or cleanup session and only publishes the next trigger when the
+    previous session is truly finished.
+    """
 
     enabled: bool
-    topic_name: str
+    ask_topic_name: str
+    robot_topic_name: str
     node_name: str
     cup_id_to_robot_label: dict[int, int] = field(default_factory=dict)
-    publisher: object | None = None
+    ask_publisher: object | None = None
+    robot_publisher: object | None = None
     feedback_subscription: object | None = None
     node: object | None = None
     _rclpy: object | None = None
@@ -45,6 +58,7 @@ class ROS2TriggerBridge:
     _active_ask_cups: set[int] = field(default_factory=set)
     _active_ask_session_cup: int | None = None
     _pending_ask_events: dict[int, dict] = field(default_factory=dict)
+    _pending_robot_feedback: list[dict] = field(default_factory=list)
     _ask_rearm_at: float = 0.0
     _ask_state_cleared_since: float | None = None
     _liquid_cleanup_session_active: bool = False
@@ -52,9 +66,12 @@ class ROS2TriggerBridge:
 
     @classmethod
     def from_config(cls, config: dict, active: bool) -> "ROS2TriggerBridge":
+        """Build and optionally initialize the bridge from config.yaml."""
         cfg = config.get("ros2_trigger", {}) if isinstance(config, dict) else {}
         enabled = bool(cfg.get("enabled", False)) and active
-        topic_name = str(cfg.get("topic", "/cup_cleanup/trigger"))
+        legacy_topic_name = str(cfg.get("topic", "/cup_cleanup/trigger"))
+        ask_topic_name = str(cfg.get("ask_topic", legacy_topic_name))
+        robot_topic_name = str(cfg.get("robot_topic", legacy_topic_name))
         node_name = str(cfg.get("node_name", "cup_cleanup_trigger_bridge"))
         cup_id_map_raw = cfg.get("cup_id_to_robot_label", {})
         cup_id_to_robot_label: dict[int, int] = {}
@@ -66,7 +83,8 @@ class ROS2TriggerBridge:
                     continue
         bridge = cls(
             enabled=enabled,
-            topic_name=topic_name,
+            ask_topic_name=ask_topic_name,
+            robot_topic_name=robot_topic_name,
             node_name=node_name,
             cup_id_to_robot_label=cup_id_to_robot_label,
         )
@@ -74,6 +92,7 @@ class ROS2TriggerBridge:
         return bridge
 
     def _initialize_ros(self) -> None:
+        """Create the ROS2 node, publishers, and feedback subscription."""
         if not self.enabled:
             return
         try:
@@ -89,14 +108,18 @@ class ROS2TriggerBridge:
         if not rclpy.ok():
             rclpy.init(args=None)
         self.node = rclpy.create_node(self.node_name)
-        self.publisher = self.node.create_publisher(String, self.topic_name, 10)
+        self.ask_publisher = self.node.create_publisher(String, self.ask_topic_name, 10)
+        self.robot_publisher = self.node.create_publisher(String, self.robot_topic_name, 10)
         self.feedback_subscription = self.node.create_subscription(
             String,
             ROBOT_FEEDBACK_TOPIC,
             self._handle_robot_feedback,
             10,
         )
-        print(f"[INFO] ROS2 trigger bridge enabled on topic {self.topic_name}")
+        print(
+            f"[INFO] ROS2 trigger bridge enabled: "
+            f"ask_topic={self.ask_topic_name}, robot_topic={self.robot_topic_name}"
+        )
 
     def close(self) -> None:
         if not self.enabled or self.node is None or self._rclpy is None:
@@ -105,26 +128,59 @@ class ROS2TriggerBridge:
             self.node.destroy_node()
         finally:
             self.node = None
-            self.publisher = None
+            self.ask_publisher = None
+            self.robot_publisher = None
 
     def _map_cup_id(self, source_cup_id: int) -> int:
         return int(self.cup_id_to_robot_label.get(int(source_cup_id), int(source_cup_id)))
 
-    def _publish(self, payload: dict) -> None:
-        if not self.enabled or self.publisher is None or self._std_msgs is None:
+    def _publish_to(self, publisher, payload: dict) -> None:
+        if not self.enabled or publisher is None or self._std_msgs is None:
             return
         message = self._std_msgs()
         message.data = json.dumps(payload, ensure_ascii=True)
-        self.publisher.publish(message)
+        publisher.publish(message)
+
+    def _publish_ask(self, payload: dict) -> None:
+        self._publish_to(self.ask_publisher, payload)
+
+    def _publish_robot(self, payload: dict) -> None:
+        self._publish_to(self.robot_publisher, payload)
 
     def _clear_active_ask_session(self, timestamp_now: float) -> None:
+        """Release ASK ownership and arm a short delay before the next ASK.
+
+        The re-arm delay prevents an old ASK session from clearing and a new ASK
+        from being published in the exact same frame, which previously caused
+        duplicate or confusing back-to-back social prompts.
+        """
         if self._active_ask_session_cup is not None:
             self._active_ask_cups.discard(self._active_ask_session_cup)
         self._active_ask_session_cup = None
         self._ask_rearm_at = float(timestamp_now) + ASK_REARM_DELAY_SEC
         self._ask_state_cleared_since = None
 
+    def _pump_robot_feedback(self) -> None:
+        if self._rclpy is None or self.node is None:
+            return
+        try:
+            self._rclpy.spin_once(self.node, timeout_sec=0.0)
+        except Exception:
+            pass
+
+    def drain_robot_feedback(self) -> list[dict]:
+        self._pump_robot_feedback()
+        feedback_events = list(self._pending_robot_feedback)
+        self._pending_robot_feedback.clear()
+        return feedback_events
+
     def _handle_robot_feedback(self, msg) -> None:
+        """End the robot-owned ASK session only when the robot reports done.
+
+        Policy state can flicker for a frame while the robot is still moving.
+        Robot feedback is therefore treated as the authoritative signal that the
+        ask-related execution really completed, aborted, or was cancelled.
+        """
         try:
             payload = json.loads(msg.data)
         except Exception:
@@ -133,9 +189,18 @@ class ROS2TriggerBridge:
             return
         source_cup_id = int(payload.get("source_cup_id", -1))
         status = str(payload.get("status", "unknown"))
-        if self._active_ask_session_cup != source_cup_id:
-            return
         if status not in {"completed", "aborted", "cancelled"}:
+            return
+        self._pending_robot_feedback.append(
+            {
+                "event_type": "ASK_ACTION_FINISHED",
+                "source_cup_id": source_cup_id,
+                "status": status,
+                "timestamp": float(payload.get("timestamp", 0.0) or 0.0),
+                "reason": str(payload.get("reason", "none")),
+            }
+        )
+        if self._active_ask_session_cup != source_cup_id:
             return
         print(
             f"[INFO] ASK session released from robot feedback: "
@@ -144,6 +209,7 @@ class ROS2TriggerBridge:
         self._clear_active_ask_session(float(payload.get("timestamp", 0.0) or 0.0))
 
     def _queue_or_publish_ask(self, payload: dict, ask_signature: tuple[int, int]) -> None:
+        """Publish immediately when idle, otherwise queue behind the active ASK."""
         source_cup_id = int(payload["source_cup_id"])
         payload_copy = dict(payload)
         payload_copy["ask_signature"] = ask_signature
@@ -152,11 +218,12 @@ class ROS2TriggerBridge:
             self._active_ask_cups.add(source_cup_id)
             self._active_ask_session_cup = source_cup_id
             self._ask_state_cleared_since = None
-            self._publish(payload)
+            self._publish_ask(payload)
             return
         self._pending_ask_events[source_cup_id] = payload_copy
 
     def _drain_pending_ask(self, timestamp_now: float) -> None:
+        """Promote the oldest queued ASK once the active session is gone."""
         if self._active_ask_session_cup is not None or not self._pending_ask_events:
             return
         if float(timestamp_now) < float(self._ask_rearm_at):
@@ -169,9 +236,16 @@ class ROS2TriggerBridge:
         self._active_ask_cups.add(source_cup_id)
         self._active_ask_session_cup = source_cup_id
         self._ask_state_cleared_since = None
-        self._publish(payload)
+        self._publish_ask(payload)
 
     def apply_action_latches(self, predictions: list[dict]) -> list[dict]:
+        """Keep the active ASK cup visually latched to ASK in the overlay.
+
+        The policy runtime may already be transitioning through intermediate
+        states while the robot is still executing the ASK flow. For operator
+        clarity, the UI keeps showing ASK until the robot feedback releases the
+        session.
+        """
         if self._active_ask_session_cup is None or not predictions:
             return predictions
 
@@ -188,13 +262,17 @@ class ROS2TriggerBridge:
         return latched_predictions
 
     def process_predictions(self, predictions: list[dict], timestamp_now: float) -> None:
+        """Convert one frame of policy predictions into ROS2 trigger events.
+
+        This method is called once per live-policy frame. It:
+        - receives any pending robot feedback first
+        - scans the current policy outputs
+        - emits one-shot ASK / cancel / cleanup triggers when conditions match
+        - maintains session state for ASK ownership and cleanup lifecycle
+        """
         if not self.enabled:
             return
-        if self._rclpy is not None and self.node is not None:
-            try:
-                self._rclpy.spin_once(self.node, timeout_sec=0.0)
-            except Exception:
-                pass
+        self._pump_robot_feedback()
 
         # `current_liquid_cups` tracks which cups still belong to the current
         # policy-side liquid-check candidate set in this frame.
@@ -243,7 +321,7 @@ class ROS2TriggerBridge:
                     self._active_ask_cups.discard(source_cup_id)
                     if self._active_ask_session_cup == source_cup_id:
                         self._clear_active_ask_session(float(timestamp_now))
-                    self._publish(
+                    self._publish_ask(
                         {
                             "event_type": "CANCEL_ASK_TRIGGER",
                             "cup_id": robot_cup_id,
@@ -286,11 +364,19 @@ class ROS2TriggerBridge:
             if trigger_item is not None:
                 source_cup_id = int(trigger_item.get("cup_id", -1))
                 robot_cup_id = self._map_cup_id(source_cup_id)
-                self._publish(
+                cleanup_source_cup_ids = sorted(current_liquid_cups)
+                cleanup_robot_cup_ids: list[int] = []
+                for cleanup_source_cup_id in cleanup_source_cup_ids:
+                    mapped_robot_cup_id = self._map_cup_id(cleanup_source_cup_id)
+                    if mapped_robot_cup_id not in cleanup_robot_cup_ids:
+                        cleanup_robot_cup_ids.append(mapped_robot_cup_id)
+                self._publish_robot(
                     {
                         "event_type": "ROBOT_LIQUID_CHECK_TRIGGER",
                         "cup_id": robot_cup_id,
                         "source_cup_id": source_cup_id,
+                        "cleanup_source_cup_ids": cleanup_source_cup_ids,
+                        "cleanup_robot_cup_ids": cleanup_robot_cup_ids,
                         "reason": "cleanup_session_start",
                         "timestamp": float(timestamp_now),
                     }
@@ -305,6 +391,9 @@ class ROS2TriggerBridge:
             if self._active_ask_session_cup in current_ask_cups:
                 self._ask_state_cleared_since = None
             else:
+                # If the policy no longer shows ASK for the active cup, start a
+                # watchdog timer. We still prefer robot feedback for release, but
+                # this avoids a permanently stuck session when feedback is lost.
                 if self._ask_state_cleared_since is None:
                     self._ask_state_cleared_since = float(timestamp_now)
                 cleared_duration = float(timestamp_now) - float(self._ask_state_cleared_since)
@@ -316,6 +405,7 @@ class ROS2TriggerBridge:
                     )
                     self._clear_active_ask_session(float(timestamp_now))
 
+        # Pending ASK events are activated only after the current ASK fully ends.
         self._drain_pending_ask(timestamp_now)
 
         completed_liquid_results = {"EMPTY", "NON_EMPTY"}
@@ -342,7 +432,7 @@ class ROS2TriggerBridge:
                 else:
                     cancel_reason = str(item.get("reason", "liquid_check_cancelled"))
             if should_publish_cancel:
-                self._publish(
+                self._publish_robot(
                     {
                         "event_type": "CANCEL_ROBOT_LIQUID_CHECK_TRIGGER",
                         "cup_id": self._map_cup_id(cancel_source_cup_id),
